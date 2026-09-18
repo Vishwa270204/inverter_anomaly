@@ -219,42 +219,63 @@ def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
 
 
 # ============================================================
-# TITLE
+# HEADER
 # ============================================================
 
-st.title("Inverter Anomaly Detection Dashboard")
-st.caption("Autoencoder-based anomaly detection with EVT/POT reconstruction-error thresholding")
+st.markdown(
+    """
+    <div style="
+        background-color:#0F3554;
+        padding:1.6rem 1.8rem;
+        border-radius:8px;
+        margin-bottom:1.4rem;
+    ">
+        <div style="color:#FFFFFF; font-size:1.9rem; font-weight:600; line-height:1.2;">
+            ⚡ Inverter Anomaly Detection Dashboard
+        </div>
+        <div style="color:#CBD9E5; font-size:0.95rem; margin-top:0.3rem;">
+            Autoencoder-based anomaly detection with EVT/POT reconstruction-error thresholding
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 # ============================================================
-# SIDEBAR FILTERS
+# FILTERS (inline, no sidebar)
 # ============================================================
-
-st.sidebar.header("Filters")
 
 min_date = df["timestamp"].min().date()
 max_date = df["timestamp"].max().date()
 
-selected_dates = st.sidebar.date_input(
-    "Date range",
-    value=(min_date, max_date),
-    min_value=min_date,
-    max_value=max_date,
-)
+show_inverter_filter = "inverter_id" in df.columns and df["inverter_id"].nunique() > 1
+filter_cols = st.columns([2, 1, 1] if show_inverter_filter else [2, 1])
 
-show_anomalies_only = st.sidebar.checkbox("Show anomalies only", value=False)
+with filter_cols[0]:
+    selected_dates = st.date_input(
+        "Date range",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+    )
 
-if "inverter_id" in df.columns and df["inverter_id"].nunique() > 1:
-    inverter_options = ["All"] + sorted(df["inverter_id"].dropna().unique().tolist())
-    selected_inverter = st.sidebar.selectbox("Inverter", inverter_options)
+with filter_cols[1]:
+    st.write("")  # vertical alignment spacer
+    show_anomalies_only = st.checkbox("Show anomalies only", value=False)
+
+if show_inverter_filter:
+    with filter_cols[2]:
+        inverter_options = ["All"] + sorted(df["inverter_id"].dropna().unique().tolist())
+        selected_inverter = st.selectbox("Inverter", inverter_options)
 else:
     selected_inverter = "All"
 
-st.sidebar.divider()
-st.sidebar.caption(
+st.caption(
     "`anomaly_score_ratio` is reconstruction error divided by the detection "
     "threshold -- a ratio, not a probability."
 )
+st.divider()
 
 
 # ============================================================
