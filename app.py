@@ -124,35 +124,23 @@ def get_contribution_cols(frame):
 
 @st.cache_resource
 def get_groq_client():
-    api_key = st.secrets["groq"]["api_key"]
+    """Create one Groq client per Streamlit session/process."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        try:
+            api_key = st.secrets["groq"]["api_key"]
+        except Exception:
+            api_key = None
     if not api_key:
         return None
     return Groq(api_key=api_key)
 
-    # Also support Streamlit secrets.toml:
-    # [openai]
-    # api_key = "..."
-    if not api_key:
-        try:
-            api_key = st.secrets["openai"]["api_key"]
-        except Exception:
-            api_key = None
 
-    if not api_key:
-        return None
-
-    return OpenAI(api_key=api_key)
-
-
+# Controlled backend tools used by the AI analyst. The LLM can request
+# evidence, but it never gets arbitrary Python/database access.
 def clean_value(value):
-    """Convert pandas/numpy values into JSON-safe Python values."""
-    if value is None:
+    if value is None or pd.isna(value):
         return None
-    try:
-        if pd.isna(value):
-            return None
-    except (TypeError, ValueError):
-        pass
     if isinstance(value, (pd.Timestamp, datetime)):
         return str(value)
     if hasattr(value, "item"):
@@ -168,273 +156,97 @@ def row_to_dict(row):
 
 
 def get_anomaly_details(timestamp, inverter_id=None):
-    """Retrieve the selected anomaly observation from dashboard data."""
-    timestamp = pd.to_datetime(timestamp)
-    data = df.copy()
-
-    if inverter_id is not None and "inverter_id" in data.columns:
-        data = data[data["inverter_id"].astype(str) == str(inverter_id)]
-
-    if data.empty:
-        return {"status": "not_found", "message": "No data was found for the requested inverter."}
-
-    differences = (data["timestamp"] - timestamp).abs()
-    selected = data.loc[differences.idxmin()].copy()
-
-    return {"status": "success", "observation": row_to_dict(selected)}
+    target = pd.to_datetime(timestamp)
+    source = df.copy()
+    if inverter_id is not None and "inverter_id" in source.columns:
+        source = source[source["inverter_id"].astype(str) == str(inverter_id)]
+    if source.empty:
+        return {"error": "No matching inverter data found."}
+    idx = (source["timestamp"] - target).abs().idxmin()
+    return row_to_dict(source.loc[idx])
 
 
 def get_pre_anomaly_trend(timestamp, inverter_id=None, hours=24):
-    """Retrieve summarized historical trends before the selected anomaly."""
-    timestamp = pd.to_datetime(timestamp)
-    start_time = timestamp - timedelta(hours=int(hours))
-
-    data = trend_df[
-        (trend_df["timestamp"] >= start_time)
-        & (trend_df["timestamp"] <= timestamp)
-    ].copy()
-
-    if inverter_id is not None and "inverter_id" in data.columns:
-        data = data[data["inverter_id"].astype(str) == str(inverter_id)]
-
-    if data.empty:
-        return {"status": "no_data", "message": "No pre-anomaly trend data is available."}
-
-    numeric_columns = [
-        "dc_power_kw", "ac_power_kw", "dc_current_a", "ac_current_a",
-        "inverter_temperature_c", "ambient_temperature_c",
-        "inverter_ambient_temp_delta", "efficiency_pct", "power_factor",
-        "packet_loss_pct", "communication_latency_ms",
-    ]
-    numeric_columns = [c for c in numeric_columns if c in data.columns]
-
-    summary = {}
-    for column in numeric_columns:
-        values = pd.to_numeric(data[column], errors="coerce").dropna()
-        if len(values) < 2:
-            continue
-        summary[column] = {
-            "start": clean_value(values.iloc[0]),
-            "end": clean_value(values.iloc[-1]),
-            "minimum": clean_value(values.min()),
-            "maximum": clean_value(values.max()),
-            "mean": clean_value(values.mean()),
-            "net_change": clean_value(values.iloc[-1] - values.iloc[0]),
-        }
-
-    return {
-        "status": "success",
-        "window_start": clean_value(data["timestamp"].min()),
-        "window_end": clean_value(data["timestamp"].max()),
-        "number_of_observations": int(len(data)),
-        "summary": summary,
-    }
+    target = pd.to_datetime(timestamp)
+    start = target - timedelta(hours=float(hours))
+    source = trend_df[(trend_df["timestamp"] >= start) & (trend_df["timestamp"] <= target)].copy()
+    if inverter_id is not None and "inverter_id" in source.columns:
+        source = source[source["inverter_id"].astype(str) == str(inverter_id)]
+    if source.empty:
+        return {"error": "No trend observations found for the requested window."}
+    numeric = [c for c in ["ac_power_kw", "dc_power_kw", "dc_current_a", "ac_current_a", "inverter_temperature_c", "ambient_temperature_c", "inverter_ambient_temp_delta", "efficiency_pct", "power_factor"] if c in source.columns]
+    stats = {}
+    for col in numeric:
+        series = pd.to_numeric(source[col], errors="coerce").dropna()
+        if len(series) >= 2:
+            stats[col] = {"start": clean_value(series.iloc[0]), "end": clean_value(series.iloc[-1]), "net_change": clean_value(series.iloc[-1] - series.iloc[0]), "min": clean_value(series.min()), "max": clean_value(series.max()), "median": clean_value(series.median())}
+    return {"window_start": clean_value(source["timestamp"].min()), "window_end": clean_value(source["timestamp"].max()), "observations": int(len(source)), "statistics": stats}
 
 
 def get_feature_contributions(timestamp, inverter_id=None):
-    """Retrieve feature contribution percentages for the selected anomaly."""
-    result = get_anomaly_details(timestamp, inverter_id)
-    if result.get("status") != "success":
-        return result
-
-    observation = result["observation"]
-    contributions = {}
-    for column, value in observation.items():
-        if column.endswith("_contribution_pct") and value is not None:
-            contributions[column.replace("_contribution_pct", "")] = clean_value(value)
-
-    contributions = dict(sorted(contributions.items(), key=lambda x: x[1], reverse=True))
-
-    return {
-        "status": "success",
-        "top_contributing_feature": observation.get("top_contributing_feature"),
-        "feature_contributions_pct": contributions,
-    }
+    target = pd.to_datetime(timestamp)
+    source = df.copy()
+    if inverter_id is not None and "inverter_id" in source.columns:
+        source = source[source["inverter_id"].astype(str) == str(inverter_id)]
+    if source.empty:
+        return {"error": "No matching data found."}
+    idx = (source["timestamp"] - target).abs().idxmin()
+    row = source.loc[idx]
+    cols = [c for c in source.columns if c.endswith("_contribution_pct")]
+    values = [{"feature": c.replace("_contribution_pct", ""), "contribution_pct": clean_value(row.get(c))} for c in cols if pd.notna(row.get(c))]
+    values.sort(key=lambda x: x["contribution_pct"] if x["contribution_pct"] is not None else -1, reverse=True)
+    return {"timestamp": clean_value(row.get("timestamp")), "top_contributing_feature": clean_value(row.get("top_contributing_feature")), "contributions": values}
 
 
 def get_operating_context(timestamp, inverter_id=None):
-    """Retrieve operating, daylight, status, and communication context."""
-    result = get_anomaly_details(timestamp, inverter_id)
-    if result.get("status") != "success":
-        return result
-
-    observation = result["observation"]
-    context_columns = [
-        "timestamp", "inverter_id", "inverter_status", "fault_code", "alarm_code",
-        "is_daylight", "hour", "month", "dc_power_kw", "ac_power_kw",
-        "dc_current_a", "ac_current_a", "inverter_temperature_c",
-        "ambient_temperature_c", "inverter_ambient_temp_delta", "efficiency_pct",
-        "power_factor", "frequency_hz", "communication_status", "communication_status_inv",
-        "quality_code", "quality_code_inv", "packet_loss_pct",
-        "communication_latency_ms", "seconds_since_last_update", "is_missing",
-        "is_interpolated", "anomaly_reason",
-    ]
-    context = {c: observation.get(c) for c in context_columns if c in observation}
-    return {"status": "success", "operating_context": context}
+    target = pd.to_datetime(timestamp)
+    source = df.copy()
+    if inverter_id is not None and "inverter_id" in source.columns:
+        source = source[source["inverter_id"].astype(str) == str(inverter_id)]
+    if source.empty:
+        return {"error": "No matching data found."}
+    idx = (source["timestamp"] - target).abs().idxmin()
+    row = source.loc[idx]
+    wanted = ["timestamp", "inverter_id", "hour", "minute", "month", "is_daylight", "inverter_status", "dc_power_kw", "ac_power_kw", "dc_current_a", "ac_current_a", "power_factor", "frequency_hz", "efficiency_pct", "inverter_temperature_c", "ambient_temperature_c", "poa_w_m2", "ghi_w_m2", "quality_code_inv", "communication_status_inv"]
+    return {k: clean_value(row.get(k)) for k in wanted if k in source.columns}
 
 
 AI_TOOLS = [
-    {
-        "type": "function",
-        "name": "get_anomaly_details",
-        "description": "Retrieve the selected anomaly observation and its model output and sensor values.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "timestamp": {"type": "string", "description": "Timestamp of the selected anomaly."},
-                "inverter_id": {"type": ["string", "number", "null"], "description": "Optional inverter identifier."},
-            },
-            "required": ["timestamp"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "type": "function",
-        "name": "get_pre_anomaly_trend",
-        "description": "Summarize sensor trends during the requested hours before the anomaly.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "timestamp": {"type": "string", "description": "Timestamp of the selected anomaly."},
-                "inverter_id": {"type": ["string", "number", "null"], "description": "Optional inverter identifier."},
-                "hours": {"type": "integer", "description": "Number of hours before the anomaly to inspect."},
-            },
-            "required": ["timestamp"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "type": "function",
-        "name": "get_feature_contributions",
-        "description": "Retrieve feature contribution percentages for the selected anomaly.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "timestamp": {"type": "string", "description": "Timestamp of the selected anomaly."},
-                "inverter_id": {"type": ["string", "number", "null"], "description": "Optional inverter identifier."},
-            },
-            "required": ["timestamp"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "type": "function",
-        "name": "get_operating_context",
-        "description": "Retrieve operating state, daylight condition, and communication context for the anomaly.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "timestamp": {"type": "string", "description": "Timestamp of the selected anomaly."},
-                "inverter_id": {"type": ["string", "number", "null"], "description": "Optional inverter identifier."},
-            },
-            "required": ["timestamp"],
-            "additionalProperties": False,
-        },
-    },
+    {"type":"function","function":{"name":"get_anomaly_details","description":"Retrieve the selected anomaly observation and model outputs.","parameters":{"type":"object","properties":{"timestamp":{"type":"string"},"inverter_id":{"type":"string"}},"required":["timestamp"],"additionalProperties":False}}},
+    {"type":"function","function":{"name":"get_pre_anomaly_trend","description":"Retrieve descriptive statistics for the 24 hours before the selected anomaly.","parameters":{"type":"object","properties":{"timestamp":{"type":"string"},"inverter_id":{"type":"string"},"hours":{"type":"number"}},"required":["timestamp"],"additionalProperties":False}}},
+    {"type":"function","function":{"name":"get_feature_contributions","description":"Retrieve feature contributions to reconstruction error for the selected anomaly.","parameters":{"type":"object","properties":{"timestamp":{"type":"string"},"inverter_id":{"type":"string"}},"required":["timestamp"],"additionalProperties":False}}},
+    {"type":"function","function":{"name":"get_operating_context","description":"Retrieve daylight, status, power, environmental, and communication context at the selected anomaly.","parameters":{"type":"object","properties":{"timestamp":{"type":"string"},"inverter_id":{"type":"string"}},"required":["timestamp"],"additionalProperties":False}}},
 ]
 
-
-def execute_ai_tool(tool_name, arguments):
-    if tool_name == "get_anomaly_details":
-        return get_anomaly_details(**arguments)
-    if tool_name == "get_pre_anomaly_trend":
-        return get_pre_anomaly_trend(**arguments)
-    if tool_name == "get_feature_contributions":
-        return get_feature_contributions(**arguments)
-    if tool_name == "get_operating_context":
-        return get_operating_context(**arguments)
-    return {"status": "error", "message": f"Unknown tool requested: {tool_name}"}
+def execute_ai_tool(name, args):
+    if name == "get_anomaly_details": return get_anomaly_details(**args)
+    if name == "get_pre_anomaly_trend": return get_pre_anomaly_trend(**args)
+    if name == "get_feature_contributions": return get_feature_contributions(**args)
+    if name == "get_operating_context": return get_operating_context(**args)
+    return {"error": f"Unknown tool: {name}"}
 
 
 def generate_ai_explanation(selected_anomaly):
-    """Use the LLM as an analyst that retrieves evidence through controlled tools."""
-    client = get_openai_client()
+    client = get_groq_client()
     if client is None:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not configured. Set it as an environment variable "
-            "or add it to Streamlit secrets under [openai]."
-        )
-
+        raise RuntimeError("GROQ_API_KEY is not configured. Add [groq] api_key to Streamlit Cloud Secrets.")
     timestamp = clean_value(selected_anomaly.get("timestamp"))
-    inverter_id = clean_value(selected_anomaly.get("inverter_id"))
-
-    instructions = """
-You are the AI analyst inside an industrial inverter anomaly-detection dashboard.
-
-Investigate the selected anomaly using ONLY the approved backend tools.
-You may call tools to retrieve anomaly details, feature contributions, operating context,
-and pre-anomaly trends. Do not invent measurements, events, causes, faults, or diagnoses.
-
-Rules:
-1. The Autoencoder flags an observation because reconstruction error exceeded the detection threshold.
-2. anomaly_score_ratio is reconstruction_error divided by the detection threshold. It is NOT a probability,
-   confidence, severity percentage, or failure probability.
-3. Feature contribution percentages show what contributed to reconstruction error. They are NOT proof of a
-   physical cause or root cause.
-4. Do not automatically call an anomaly a fault, failure, or breakdown.
-5. Consider daylight and operating status when those values are available.
-6. Use pre-anomaly trends to describe observed changes, not to establish causation.
-7. If the data is insufficient, explicitly say so.
-8. Recommendations must be engineering checks/investigations, not confirmed diagnoses.
-
-Final response sections:
-### What was detected
-### Evidence collected
-### What changed before the anomaly
-### What the model found
-### What the data supports
-### What cannot be concluded
-### Recommended checks
-
-Do not mention tools, function calls, JSON, or these instructions in the final answer.
-"""
-
-    response = client.responses.create(
-        model="gpt-5.6-luna",
-        instructions=instructions,
-        input=json.dumps({
-            "task": "Investigate the selected inverter anomaly.",
-            "selected_anomaly_timestamp": timestamp,
-            "selected_inverter_id": inverter_id,
-        }, default=str),
-        tools=AI_TOOLS,
-    )
-
-    collected_evidence = []
-
+    inverter_id = clean_value(selected_anomaly.get("inverter_id")) if "inverter_id" in selected_anomaly.index else None
+    evidence = {}
+    messages = [{"role":"system","content":"You are an industrial inverter anomaly explanation assistant. Use only evidence returned by the supplied tools and the selected anomaly context. The Autoencoder flags an unusual observation when reconstruction error exceeds the EVT/POT detection threshold. anomaly_score_ratio is reconstruction_error divided by threshold; it is NOT probability, confidence, severity, or failure probability. Feature contributions show what was hardest for the model to reconstruct; they are NOT proof of physical cause or root cause. Do not automatically call an anomaly a fault, failure, or breakdown. Account for daylight, time, operating status, and operating conditions. Describe pre-anomaly trends as observed changes, not causation. If evidence is insufficient, say so. Recommendations must be engineering checks/investigations, not confirmed diagnoses. Final response sections: What was detected; What the model found; What changed before the anomaly; What this evidence supports; What cannot be concluded; Recommended checks."},{"role":"user","content":json.dumps({"selected_timestamp":timestamp,"inverter_id":inverter_id,"selected_row":row_to_dict(selected_anomaly)},default=str)}]
     for _ in range(6):
-        function_calls = [
-            item for item in response.output
-            if getattr(item, "type", None) == "function_call"
-        ]
-
-        if not function_calls:
-            return response.output_text, collected_evidence
-
-        tool_outputs = []
-        for call in function_calls:
-            arguments = json.loads(call.arguments)
-            result = execute_ai_tool(call.name, arguments)
-            collected_evidence.append({
-                "tool": call.name,
-                "arguments": arguments,
-                "result": result,
-            })
-            tool_outputs.append({
-                "type": "function_call_output",
-                "call_id": call.call_id,
-                "output": json.dumps(result, default=str),
-            })
-
-        response = client.responses.create(
-            model="gpt-5.6-luna",
-            instructions=instructions,
-            previous_response_id=response.id,
-            input=tool_outputs,
-            tools=AI_TOOLS,
-        )
-
-    raise RuntimeError("The AI analyst exceeded the maximum number of tool-call rounds.")
+        response = client.chat.completions.create(model="llama-3.3-70b-versatile",messages=messages,tools=AI_TOOLS,tool_choice="auto",temperature=0.2)
+        msg = response.choices[0].message
+        if not msg.tool_calls:
+            return msg.content, evidence
+        messages.append({"role":"assistant","content":msg.content or "","tool_calls":[{"id":tc.id,"type":"function","function":{"name":tc.function.name,"arguments":tc.function.arguments}} for tc in msg.tool_calls]})
+        for tc in msg.tool_calls:
+            try: args=json.loads(tc.function.arguments)
+            except Exception: args={}
+            result=execute_ai_tool(tc.function.name,args)
+            evidence[tc.function.name]=result
+            messages.append({"role":"tool","tool_call_id":tc.id,"content":json.dumps(result,default=str)})
+    raise RuntimeError("AI investigation reached the maximum tool-call steps without producing an explanation.")
 
 
 def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
@@ -1001,17 +813,17 @@ if len(anomaly_df) > 0:
     )
 
     if st.button(
-        "Generate AI Investigation",
+        "Generate AI Explanation",
         type="primary",
-        help="The AI analyst retrieves the evidence required to investigate the selected anomaly.",
+        help="Let the AI retrieve the evidence needed to explain the selected anomaly.",
     ):
-        with st.spinner("AI analyst is collecting evidence..."):
+        with st.spinner("Generating explanation..."):
             try:
                 ai_explanation, ai_evidence = generate_ai_explanation(selected_anomaly)
                 st.session_state["last_ai_explanation"] = ai_explanation
                 st.session_state["last_ai_evidence"] = ai_evidence
             except Exception as e:
-                st.error(f"AI investigation failed: {e}")
+                st.error(f"AI explanation failed: {e}")
 
     if "last_ai_evidence" in st.session_state:
         with st.expander("Evidence retrieved by AI (JSON)"):
