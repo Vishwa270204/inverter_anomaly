@@ -304,7 +304,8 @@ def generate_ai_explanation(evidence: dict, api_key: str) -> str:
     Raises requests.HTTPError / requests.RequestException on failure."""
     payload = {
         "model": GROQ_MODEL,
-        "temperature": 0.2,
+        "temperature": 0,
+        "seed": 42,
         "max_tokens": 700,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -333,7 +334,7 @@ def generate_ai_explanation(evidence: dict, api_key: str) -> str:
 # either way works, this line just picks whichever is set.
 # ============================================================
 
-GROQ_API_KEY = "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"  # <-- put your key between the quotes
+GROQ_API_KEY = "PASTE_YOUR_GROQ_API_KEY_HERE"  # <-- put your key between the quotes
 groq_api_key = GROQ_API_KEY if GROQ_API_KEY and "PASTE_YOUR" not in GROQ_API_KEY else os.environ.get("GROQ_API_KEY", "")
 
 
