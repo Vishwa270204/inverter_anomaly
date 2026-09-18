@@ -895,12 +895,14 @@ if len(anomaly_df) > 0:
     # ========================================================
     # AI EXPLANATION (evidence only -- LLM call added later)
     # ========================================================
-    st.markdown("#### AI Explanation")
+    st.markdown("#### What Happened, In Plain Words")
     st.caption(
         "An LLM-generated explanation will be added here in a future version. "
         "Below is the exact evidence package that will be passed to it -- built "
         "only from values already shown above, so the explanation stays "
-        "grounded in what the data actually supports."
+        "grounded in what the data actually supports, but written in plain, "
+        "everyday language -- no jargon, no formulas, nothing you'd need a "
+        "manual to understand."
     )
 
     llm_evidence = build_llm_evidence(selected_anomaly, trend_window, contribution_cols)
@@ -909,24 +911,36 @@ if len(anomaly_df) > 0:
         st.json(llm_evidence)
 
     EXPLANATION_PROMPT_TEMPLATE = """
-You are an AI assistant explaining an industrial inverter anomaly
-detected by a machine-learning model.
+You are explaining an inverter problem to someone with NO technical or
+engineering background -- e.g. a solar plant owner, site manager, or
+operations staff. They do not know what "reconstruction error," "z-score,"
+"threshold," or "contribution percentage" mean, and those words must never
+appear in your answer.
 
 STRICT EVIDENCE RULES
 - Use ONLY the numbers and timestamps given in EVIDENCE below.
 - Do NOT invent sensor readings, fault codes, weather, or maintenance history.
 - Keep "before_anomaly" and "during_anomaly" evidence strictly separate.
 - A temporal relationship does NOT prove causation -- phrase causes as
-  "likely" or "consistent with", never as certain fact.
-- If the evidence is insufficient to say why the anomaly happened, say so
-  plainly instead of guessing.
+  "likely" or "probably", never as certain fact.
+- If the evidence is insufficient to say why it happened, say so plainly
+  instead of guessing.
 
-OUTPUT FORMAT (keep it SHORT -- max ~120 words total, plain text, no markdown headers)
-When: <one line -- start time, end time>
-Why: <1-2 sentences -- most likely cause(s), based only on the evidence,
-      referencing which measurement(s) moved and by how much>
-Solution: <1-2 sentences -- concrete, practical next step a technician or
-           engineer could take to confirm the cause and fix/prevent it>
+HOW TO WRITE
+- Write like you're explaining it out loud to a friend who owns the plant,
+  not a report to an engineer.
+- Short sentences. Everyday words. No technical terms, no model jargon, no
+  raw formulas or percentages dumped in -- translate numbers into plain
+  meaning (e.g. "it ran hotter than usual" instead of "temp_delta_zscore
+  rose").
+
+OUTPUT FORMAT -- respond with ONLY valid JSON, nothing before or after it,
+no markdown code fences, using exactly these three keys:
+{{
+  "when": "<one short plain sentence -- day/time in simple words like 'this morning', plus roughly how long it lasted>",
+  "why": "<1-2 short plain sentences -- what most likely happened and why, in everyday terms, phrased as 'likely'/'probably' not certain fact>",
+  "solution": "<one short, practical, actionable sentence a non-expert could act on or hand to a technician>"
+}}
 
 EVIDENCE
 ============================================================
@@ -949,24 +963,65 @@ EVIDENCE
                     model="openai/gpt-oss-20b",
                     messages=[
                         {"role": "system", "content": (
-                            "You are an industrial anomaly-analysis assistant. "
-                            "Use only the supplied evidence. Keep before-anomaly "
-                            "and during-anomaly evidence strictly separate. "
-                            "Never invent measurements, faults, causes, or "
-                            "operating conditions. A temporal relationship does "
-                            "not establish causation. A net change does not "
-                            "prove a gradual trend. Always follow the requested "
-                            "OUTPUT FORMAT exactly and keep the whole answer short."
+                            "You explain industrial inverter anomalies to "
+                            "non-technical readers in plain, everyday language. "
+                            "Use only the supplied evidence -- never invent "
+                            "measurements, faults, causes, or operating "
+                            "conditions. Keep before-anomaly and during-anomaly "
+                            "evidence strictly separate. A temporal relationship "
+                            "does not establish causation. Never use technical "
+                            "or model-internal terms (reconstruction error, "
+                            "z-score, threshold, contribution percentage, "
+                            "anomaly score, etc.) in your answer -- translate "
+                            "everything into plain meaning instead. Respond with "
+                            "ONLY the requested JSON object, no extra text, no "
+                            "markdown code fences."
                         )},
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.1,
                 )
-                explanation_text = response.choices[0].message.content
-                st.markdown(
-                    f'<div class="insight-card">{explanation_text}</div>',
-                    unsafe_allow_html=True,
-                )
+                explanation_text = response.choices[0].message.content.strip()
+
+                # The model may occasionally wrap JSON in ```...``` fences
+                # despite instructions -- strip those defensively.
+                if explanation_text.startswith("```"):
+                    explanation_text = explanation_text.strip("`")
+                    if explanation_text.lower().startswith("json"):
+                        explanation_text = explanation_text[4:].strip()
+
+                try:
+                    parsed = json.loads(explanation_text)
+                    when_text = parsed.get("when", "").strip()
+                    why_text = parsed.get("why", "").strip()
+                    solution_text = parsed.get("solution", "").strip()
+                except (json.JSONDecodeError, AttributeError):
+                    parsed = None
+
+                if parsed and (when_text or why_text or solution_text):
+                    card_cols = st.columns(3)
+                    card_specs = [
+                        ("🕒 When", when_text, SKY),
+                        ("⚠️ Why", why_text, ALERT),
+                        ("🔧 Solution", solution_text, "#1E7A4C"),
+                    ]
+                    for col, (label, text, accent) in zip(card_cols, card_specs):
+                        with col:
+                            st.markdown(
+                                f"""
+                                <div class="insight-card" style="border-left-color:{accent}; min-height:150px;">
+                                    <b>{label}</b><br><br>{text or "—"}
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+                else:
+                    # Fallback if the model didn't return valid JSON --
+                    # still show something rather than nothing.
+                    st.markdown(
+                        f'<div class="insight-card">{explanation_text}</div>',
+                        unsafe_allow_html=True,
+                    )
             except Exception as e:
                 st.error(f"AI explanation failed: {e}")
 
