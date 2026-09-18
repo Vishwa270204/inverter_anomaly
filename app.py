@@ -33,37 +33,27 @@ st.set_page_config(
     page_title="Inverter Anomaly Detection",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 # ------------------------------------------------------------
 # THEME
-# A dark, technical/industrial palette (navy + amber/teal accents)
-# instead of the previous light default. Applied via CSS variables
-# so Streamlit's native widgets pick it up too.
+# Light, clean palette -- no sidebar, no dark theme. Filters stay
+# inline at the top of the page like the original layout.
 # ------------------------------------------------------------
-PLOTLY_TEMPLATE = "plotly_dark"
-BG = "#0B1220"
-PANEL = "#111A2C"
-PANEL_ALT = "#16223A"
-BORDER = "#22314F"
-TEXT = "#E7ECF5"
-MUTED = "#8CA0C2"
-ACCENT = "#3DD6C6"     # teal -- primary series
-ACCENT2 = "#F5A623"    # amber -- secondary series / warnings
-DANGER = "#FF5C7A"     # anomaly markers
-BLUE = "#5B9BD5"
+PLOTLY_TEMPLATE = "plotly_white"
+PANEL = "#FFFFFF"
+BORDER = "#E3E8EF"
+TEXT = "#1B2430"
+MUTED = "#5B6B82"
+ACCENT = "#4C78A8"     # blue -- primary series
+ACCENT2 = "#F58518"    # orange -- secondary series / warnings
+DANGER = "#E45756"     # anomaly markers / temperature
+BLUE = "#72B7B2"
 
 st.markdown(
     f"""
     <style>
-    .stApp {{ background-color: {BG}; color: {TEXT}; }}
-    .block-container {{ padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1400px; }}
-
-    section[data-testid="stSidebar"] {{
-        background-color: {PANEL}; border-right: 1px solid {BORDER};
-    }}
-    section[data-testid="stSidebar"] * {{ color: {TEXT}; }}
+    .block-container {{ padding-top: 1.6rem; padding-bottom: 3rem; }}
 
     [data-testid="stMetric"] {{
         background-color: {PANEL};
@@ -72,47 +62,30 @@ st.markdown(
         padding: 0.9rem 1rem 0.7rem 1rem;
     }}
     [data-testid="stMetricValue"] {{ font-size: 1.35rem; color: {TEXT}; }}
-    [data-testid="stMetricLabel"] {{ color: {MUTED}; }}
 
-    h1, h2, h3, h4, h5 {{ color: {TEXT} !important; }}
-    p, span, label, .stMarkdown, .stCaption {{ color: {TEXT}; }}
-    .stCaption, [data-testid="stCaptionContainer"] {{ color: {MUTED} !important; }}
-
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: 4px; border-bottom: 1px solid {BORDER};
-    }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 1px solid {BORDER}; }}
     .stTabs [data-baseweb="tab"] {{
         background-color: transparent; color: {MUTED};
         border-radius: 8px 8px 0 0; padding: 0.5rem 1rem;
     }}
     .stTabs [aria-selected="true"] {{
-        background-color: {PANEL_ALT}; color: {ACCENT} !important;
+        background-color: #F0F4F9; color: {ACCENT} !important;
         border: 1px solid {BORDER}; border-bottom: none;
     }}
 
-    div[data-testid="stExpander"] {{
-        background-color: {PANEL}; border: 1px solid {BORDER}; border-radius: 10px;
-    }}
-
     .app-header {{
-        background: linear-gradient(120deg, #0F3554 0%, #0B2540 60%, #0B1220 100%);
-        border: 1px solid {BORDER};
-        padding: 1.5rem 1.8rem; border-radius: 12px; margin-bottom: 1.2rem;
+        background-color: #0F3554;
+        padding: 1.6rem 1.8rem; border-radius: 8px; margin-bottom: 1.4rem;
     }}
-    .app-header .title {{ color: #FFFFFF; font-size: 1.85rem; font-weight: 700; }}
-    .app-header .subtitle {{ color: {MUTED}; font-size: 0.95rem; margin-top: 0.25rem; }}
-    .app-header .badge {{
-        display: inline-block; margin-top: 0.7rem; padding: 0.2rem 0.6rem;
-        border: 1px solid {ACCENT}; color: {ACCENT}; border-radius: 999px;
-        font-size: 0.75rem; letter-spacing: 0.02em;
-    }}
+    .app-header .title {{ color: #FFFFFF; font-size: 1.9rem; font-weight: 600; }}
+    .app-header .subtitle {{ color: #CBD9E5; font-size: 0.95rem; margin-top: 0.3rem; }}
 
     .note-box {{
-        background-color: {PANEL_ALT}; border-left: 3px solid {ACCENT};
+        background-color: #F0F4F9; border-left: 3px solid {ACCENT};
         padding: 0.7rem 0.9rem; border-radius: 6px; font-size: 0.88rem; color: {MUTED};
     }}
     .llm-box {{
-        background-color: {PANEL_ALT}; border: 1px solid {BORDER};
+        background-color: #FFF8EF; border: 1px solid {BORDER};
         border-left: 3px solid {ACCENT2}; border-radius: 8px;
         padding: 1rem 1.1rem; color: {TEXT}; line-height: 1.55;
     }}
@@ -352,6 +325,18 @@ def generate_ai_explanation(evidence: dict, api_key: str) -> str:
 
 
 # ============================================================
+# GROQ API KEY
+# ------------------------------------------------------------
+# Put your key directly here (simplest option), OR set it as an
+# environment variable GROQ_API_KEY before running the app --
+# either way works, this line just picks whichever is set.
+# ============================================================
+
+GROQ_API_KEY = "PASTE_YOUR_GROQ_API_KEY_HERE"  # <-- put your key between the quotes
+groq_api_key = GROQ_API_KEY if GROQ_API_KEY and "PASTE_YOUR" not in GROQ_API_KEY else os.environ.get("GROQ_API_KEY", "")
+
+
+# ============================================================
 # HEADER
 # ============================================================
 
@@ -360,7 +345,6 @@ st.markdown(
     <div class="app-header">
         <div class="title">⚡ Inverter Anomaly Detection Dashboard</div>
         <div class="subtitle">Autoencoder-based anomaly detection with EVT/POT reconstruction-error thresholding</div>
-        <div class="badge">Live • Groq-powered explanations</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -368,47 +352,45 @@ st.markdown(
 
 
 # ============================================================
-# SIDEBAR -- FILTERS + LLM SETTINGS
+# FILTERS (inline, no sidebar)
 # ============================================================
 
 min_date = df["timestamp"].min().date()
 max_date = df["timestamp"].max().date()
 
-with st.sidebar:
-    st.markdown("### Filters")
+show_inverter_filter = "inverter_id" in df.columns and df["inverter_id"].nunique() > 1
+filter_cols = st.columns([2, 1, 1] if show_inverter_filter else [2, 1])
+
+with filter_cols[0]:
     selected_dates = st.date_input(
         "Date range",
         value=(min_date, max_date),
         min_value=min_date,
         max_value=max_date,
     )
+
+with filter_cols[1]:
+    st.write("")  # vertical alignment spacer
     show_anomalies_only = st.checkbox("Show anomalies only", value=False)
 
-    show_inverter_filter = "inverter_id" in df.columns and df["inverter_id"].nunique() > 1
-    if show_inverter_filter:
+if show_inverter_filter:
+    with filter_cols[2]:
         inverter_options = ["All"] + sorted(df["inverter_id"].dropna().unique().tolist())
         selected_inverter = st.selectbox("Inverter", inverter_options)
-    else:
-        selected_inverter = "All"
+else:
+    selected_inverter = "All"
 
-    st.markdown(
-        '<div class="note-box">anomaly_score_ratio is reconstruction error '
-        "divided by the detection threshold — a ratio, not a probability.</div>",
-        unsafe_allow_html=True,
+st.caption(
+    "`anomaly_score_ratio` is reconstruction error divided by the detection "
+    "threshold -- a ratio, not a probability."
+)
+if not groq_api_key:
+    st.caption(
+        "⚠️ No Groq API key set. Paste one into the `GROQ_API_KEY` variable "
+        "near the top of app.py (or set the GROQ_API_KEY environment "
+        "variable) to enable the AI Explanation button below."
     )
-
-    st.divider()
-    st.markdown("### AI Explanation settings")
-    default_key = os.environ.get("GROQ_API_KEY", "")
-    groq_api_key = st.text_input(
-        "Groq API key",
-        value=default_key,
-        type="password",
-        help="Uses the same model as the notebook (openai/gpt-oss-20b) via "
-             "Groq's chat-completions API. Falls back to the GROQ_API_KEY "
-             "environment variable if set.",
-    )
-    st.caption("Key is kept only in this session; never written to disk.")
+st.divider()
 
 
 # ============================================================
@@ -461,21 +443,14 @@ with kpi_cols[3]:
     else:
         st.metric("Max Inverter Temperature", "—")
 
-st.write("")
+st.divider()
 
 
 # ============================================================
-# TABS
+# ANOMALY TIMELINE
 # ============================================================
 
-tab_overview, tab_power, tab_thermal, tab_investigate, tab_raw = st.tabs(
-    ["📈 Overview", "⚡ Power", "🌡️ Thermal", "🚨 Anomalies & Investigation", "🗂️ Raw Data"]
-)
-
-# ------------------------------------------------------------
-# OVERVIEW TAB -- anomaly timeline
-# ------------------------------------------------------------
-with tab_overview:
+if True:
     st.subheader("Anomaly Timeline")
     st.caption("Reconstruction error over time. Points above the threshold are flagged as anomalies.")
 
@@ -532,10 +507,14 @@ with tab_overview:
     else:
         st.info("No reconstruction-error data available for the selected period.")
 
-# ------------------------------------------------------------
-# POWER TAB
-# ------------------------------------------------------------
-with tab_power:
+st.divider()
+
+
+# ============================================================
+# POWER ANALYSIS
+# ============================================================
+
+if True:
     st.subheader("Power Analysis")
     power_col1, power_col2 = st.columns(2)
 
@@ -575,10 +554,14 @@ with tab_power:
         else:
             st.info("AC power data not available.")
 
-# ------------------------------------------------------------
-# THERMAL TAB
-# ------------------------------------------------------------
-with tab_thermal:
+st.divider()
+
+
+# ============================================================
+# THERMAL ANALYSIS
+# ============================================================
+
+if True:
     st.subheader("Thermal Analysis")
     thermal_col1, thermal_col2 = st.columns(2)
 
@@ -638,10 +621,14 @@ with tab_thermal:
         else:
             st.info("Inverter-to-ambient temperature delta not available.")
 
-# ------------------------------------------------------------
-# ANOMALIES & INVESTIGATION TAB
-# ------------------------------------------------------------
-with tab_investigate:
+st.divider()
+
+
+# ============================================================
+# DETECTED ANOMALIES + INVESTIGATION
+# ============================================================
+
+if True:
     st.subheader("Detected Anomalies")
 
     anomaly_df = filtered_df[filtered_df["anomaly_flag"]].copy() if total_observations else filtered_df.copy()
@@ -878,11 +865,14 @@ with tab_investigate:
     else:
         st.info("No anomalies in the current selection to investigate.")
 
-# ------------------------------------------------------------
-# RAW DATA TAB
-# ------------------------------------------------------------
-with tab_raw:
-    st.subheader("Filtered Data")
+st.divider()
+
+
+# ============================================================
+# RAW DATA
+# ============================================================
+
+with st.expander("View filtered data"):
     st.dataframe(filtered_df, width="stretch", hide_index=True)
 
 
