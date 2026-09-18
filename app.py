@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from groq import Groq
 
 # ============================================================
 # PAGE CONFIG
