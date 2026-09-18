@@ -54,6 +54,7 @@ BLUE = "#72B7B2"
 st.markdown(
     f"""
     <style>
+    .stApp {{ background-color: #FFFFFF; }}
     .block-container {{ padding-top: 1.6rem; padding-bottom: 3rem; }}
 
     [data-testid="stMetric"] {{
@@ -75,11 +76,13 @@ st.markdown(
     }}
 
     .app-header {{
-        background-color: #0F3554;
+        background-color: #F5F8FC;
+        border: 1px solid {BORDER};
+        border-left: 5px solid {ACCENT};
         padding: 1.6rem 1.8rem; border-radius: 8px; margin-bottom: 1.4rem;
     }}
-    .app-header .title {{ color: #FFFFFF; font-size: 1.9rem; font-weight: 600; }}
-    .app-header .subtitle {{ color: #CBD9E5; font-size: 0.95rem; margin-top: 0.3rem; }}
+    .app-header .title {{ color: {TEXT}; font-size: 1.9rem; font-weight: 600; }}
+    .app-header .subtitle {{ color: {MUTED}; font-size: 0.95rem; margin-top: 0.3rem; }}
 
     .note-box {{
         background-color: #F0F4F9; border-left: 3px solid {ACCENT};
