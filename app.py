@@ -32,7 +32,15 @@ def load_data():
 
 
 df = load_data()
+def get_trend_window(df, end_time, hours_back=24):
+    start_time = pd.to_datetime(end_time) - pd.Timedelta(hours=hours_back)
 
+    window = df[
+        (df["timestamp"] >= start_time) &
+        (df["timestamp"] <= end_time)
+    ].copy()
+
+    return window
 
 # ============================================================
 # TITLE
@@ -435,7 +443,120 @@ if len(anomaly_df) > 0:
                 f"{selected_anomaly['inverter_temperature_c']:.1f} °C"
             )
 
+# ============================================================
+# 24-HOUR PRE-ANOMALY TREND
+# ============================================================
 
+if len(anomaly_df) > 0:
+
+    st.subheader("24-Hour Trend Before Selected Anomaly")
+
+    end_time = selected_anomaly["timestamp"]
+
+    trend_window = get_trend_window(
+        filtered_df,
+        end_time,
+        hours_back=24
+    )
+
+    if len(trend_window) > 0:
+
+        # ----------------------------------------
+        # AC POWER
+        # ----------------------------------------
+
+        if "ac_power_kw" in trend_window.columns:
+
+            fig = go.Figure()
+
+            fig.add_trace(
+                go.Scatter(
+                    x=trend_window["timestamp"],
+                    y=trend_window["ac_power_kw"],
+                    mode="lines",
+                    name="AC Power"
+                )
+            )
+
+            fig.update_layout(
+                title="AC Power — 24 Hours Before Anomaly",
+                xaxis_title="Time",
+                yaxis_title="AC Power (kW)",
+                hovermode="x unified",
+                height=350
+            )
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True
+            )
+
+
+        # ----------------------------------------
+        # DC CURRENT
+        # ----------------------------------------
+
+        if "dc_current_a" in trend_window.columns:
+
+            fig = go.Figure()
+
+            fig.add_trace(
+                go.Scatter(
+                    x=trend_window["timestamp"],
+                    y=trend_window["dc_current_a"],
+                    mode="lines",
+                    name="DC Current"
+                )
+            )
+
+            fig.update_layout(
+                title="DC Current — 24 Hours Before Anomaly",
+                xaxis_title="Time",
+                yaxis_title="DC Current (A)",
+                hovermode="x unified",
+                height=350
+            )
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True
+            )
+
+
+        # ----------------------------------------
+        # INVERTER TEMPERATURE
+        # ----------------------------------------
+
+        if "inverter_temperature_c" in trend_window.columns:
+
+            fig = go.Figure()
+
+            fig.add_trace(
+                go.Scatter(
+                    x=trend_window["timestamp"],
+                    y=trend_window["inverter_temperature_c"],
+                    mode="lines",
+                    name="Inverter Temperature"
+                )
+            )
+
+            fig.update_layout(
+                title="Inverter Temperature — 24 Hours Before Anomaly",
+                xaxis_title="Time",
+                yaxis_title="Temperature (°C)",
+                hovermode="x unified",
+                height=350
+            )
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True
+            )
+
+    else:
+        st.info(
+            "No trend data available for the selected anomaly."
+        )
 # ============================================================
 # RAW DATA
 # ============================================================
