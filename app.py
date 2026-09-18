@@ -301,12 +301,24 @@ SYSTEM_PROMPT = (
 
 def generate_ai_explanation(evidence: dict, api_key: str) -> str:
     """Call Groq's chat-completions endpoint with the evidence package.
-    Raises requests.HTTPError / requests.RequestException on failure."""
+    Raises requests.HTTPError / requests.RequestException / RuntimeError
+    on failure.
+
+    openai/gpt-oss-20b is a *reasoning* model: it spends tokens on hidden
+    internal reasoning before writing the visible answer. Two things
+    matter here to avoid empty/truncated answers:
+      - use `max_completion_tokens` (not the older `max_tokens`), and
+        give it a generous budget so reasoning doesn't eat the whole thing.
+      - set `reasoning_effort` low, since this is a short explanatory
+        write-up, not a hard multi-step problem, so little reasoning is
+        actually needed.
+    """
     payload = {
         "model": GROQ_MODEL,
         "temperature": 0,
-        "seed": 42,
-        "max_tokens": 700,
+        "reasoning_effort": "low",
+        "include_reasoning": False,
+        "max_completion_tokens": 1536,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps(evidence, indent=2)},
@@ -319,11 +331,32 @@ def generate_ai_explanation(evidence: dict, api_key: str) -> str:
             "Content-Type": "application/json",
         },
         json=payload,
-        timeout=45,
+        timeout=60,
     )
     resp.raise_for_status()
     data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+
+    if "error" in data:
+        raise RuntimeError(data["error"].get("message", "Unknown Groq API error."))
+
+    choice = data["choices"][0]
+    content = (choice.get("message") or {}).get("content")
+    finish_reason = choice.get("finish_reason")
+
+    if not content:
+        raise RuntimeError(
+            f"Groq returned no visible answer text (finish_reason: "
+            f"{finish_reason!r}). This usually means the token budget ran "
+            "out during hidden reasoning -- try again, or raise "
+            "max_completion_tokens in app.py."
+        )
+    if finish_reason == "length":
+        content += (
+            "\n\n*(Note: this explanation was cut off because it hit the "
+            "token limit -- raise max_completion_tokens in app.py for "
+            "longer answers.)*"
+        )
+    return content.strip()
 
 
 # ============================================================
@@ -834,7 +867,7 @@ if True:
 
         gen_clicked = st.button("Generate AI Explanation", disabled=not bool(groq_api_key))
         if not groq_api_key:
-            st.caption("Enter a Groq API key in the sidebar to enable this.")
+            st.caption("Set GROQ_API_KEY near the top of app.py to enable this.")
 
         if gen_clicked:
             with st.spinner("Calling Groq…"):
@@ -845,6 +878,8 @@ if True:
                     st.error(f"Groq API returned an error: {e.response.status_code} {e.response.text[:300]}")
                 except requests.RequestException as e:
                     st.error(f"Could not reach Groq API: {e}")
+                except RuntimeError as e:
+                    st.error(str(e))
 
         if cache_key in st.session_state:
             st.markdown(f'<div class="llm-box">{st.session_state[cache_key]}</div>', unsafe_allow_html=True)
