@@ -178,6 +178,131 @@ def get_contribution_cols(frame):
     return [c for c in frame.columns if c.endswith("_contribution_pct")]
 
 
+FEATURE_ICONS = {
+    "temperature": "🌡️", "temp": "🌡️",
+    "voltage": "⚡", "current": "〰️", "power": "🔋",
+    "ambient": "☀️", "irradiance": "☀️", "poa": "☀️", "ghi": "☀️",
+    "frequency": "🎛️", "efficiency": "📈", "quality": "🔧",
+    "communication": "📡",
+}
+
+
+def feature_icon(feature_name: str) -> str:
+    name = feature_name.lower()
+    for key, icon in FEATURE_ICONS.items():
+        if key in name:
+            return icon
+    return "▪️"
+
+
+def compute_persistent_events(period_df):
+    """
+    Group consecutive flagged anomalies into 'persistent events' the same
+    way the notebook does for run detection (Section 13): anomalies that
+    are close together in time (within ~2 sampling intervals) are treated
+    as one ongoing event rather than separate, unrelated readings.
+
+    Nothing here is invented -- the gap threshold is derived from the
+    median spacing of the observations actually in `period_df`.
+    """
+    if period_df.empty or "anomaly_flag" not in period_df.columns:
+        return []
+
+    ordered = period_df.sort_values("timestamp")
+    diffs = ordered["timestamp"].diff().dropna()
+    sampling_interval = diffs.median() if len(diffs) else timedelta(minutes=15)
+    if pd.isna(sampling_interval) or sampling_interval <= timedelta(0):
+        sampling_interval = timedelta(minutes=15)
+    gap_threshold = max(sampling_interval * 2, timedelta(minutes=1))
+
+    anomalies = ordered[ordered["anomaly_flag"]].reset_index(drop=True)
+    if anomalies.empty:
+        return []
+
+    events = []
+    current_rows = [anomalies.iloc[0]]
+    for i in range(1, len(anomalies)):
+        row = anomalies.iloc[i]
+        if row["timestamp"] - current_rows[-1]["timestamp"] > gap_threshold:
+            events.append(current_rows)
+            current_rows = [row]
+        else:
+            current_rows.append(row)
+    events.append(current_rows)
+
+    contribution_cols = get_contribution_cols(anomalies)
+
+    out = []
+    for rows in events:
+        block = pd.DataFrame(rows)
+        start_time = block["timestamp"].min()
+        end_time = block["timestamp"].max()
+        duration_min = max((end_time - start_time).total_seconds() / 60.0, 0.0) + (
+            sampling_interval.total_seconds() / 60.0
+        )
+        peak_score = block["anomaly_score_ratio"].max() if "anomaly_score_ratio" in block else None
+        peak_error = block["reconstruction_error"].max() if "reconstruction_error" in block else None
+
+        top_feature = None
+        top_feature_pct = None
+        if contribution_cols:
+            means = block[contribution_cols].mean(numeric_only=True).dropna()
+            if len(means) > 0:
+                top_col = means.idxmax()
+                top_feature = top_col.replace("_contribution_pct", "")
+                top_feature_pct = means[top_col]
+        elif "top_contributing_feature" in block.columns and block["top_contributing_feature"].notna().any():
+            top_feature = block["top_contributing_feature"].mode().iloc[0]
+
+        out.append({
+            "start": start_time, "end": end_time, "duration_min": duration_min,
+            "count": len(block), "peak_score": peak_score, "peak_error": peak_error,
+            "top_feature": top_feature, "top_feature_pct": top_feature_pct,
+        })
+    return sorted(out, key=lambda e: e["start"])
+
+
+def ring_gauge_html(percent, color, label, size=76):
+    """Small CSS conic-gradient ring (no extra chart library needed)."""
+    percent = 0 if percent is None or pd.isna(percent) else max(0.0, min(100.0, percent))
+    deg = percent / 100 * 360
+    return f"""
+    <div style="display:flex; flex-direction:column; align-items:center; gap:0.35rem;">
+      <div style="
+          width:{size}px; height:{size}px; border-radius:50%;
+          background: conic-gradient({color} {deg}deg, #E9EDF3 {deg}deg 360deg);
+          display:flex; align-items:center; justify-content:center;">
+        <div style="
+            width:{size-16}px; height:{size-16}px; border-radius:50%;
+            background:#FFFFFF; display:flex; align-items:center; justify-content:center;
+            font-size:0.95rem; font-weight:700; color:{color};">
+          {percent:.0f}%
+        </div>
+      </div>
+      <div style="font-size:0.78rem; color:#5B6B82;">{label}</div>
+    </div>
+    """
+
+
+def kpi_card_html(icon, icon_bg, label, value, sub, value_color="#1B2430"):
+    return f"""
+    <div style="
+        background:#FFFFFF; border:1px solid #E3E8EF; border-radius:10px;
+        padding:0.9rem 1rem; display:flex; gap:0.8rem; align-items:flex-start;
+        height:100%;">
+      <div style="
+          width:40px; height:40px; min-width:40px; border-radius:10px;
+          background:{icon_bg}; display:flex; align-items:center; justify-content:center;
+          font-size:1.2rem;">{icon}</div>
+      <div>
+        <div style="font-size:0.8rem; color:#5B6B82;">{label}</div>
+        <div style="font-size:1.25rem; font-weight:700; color:{value_color}; line-height:1.3;">{value}</div>
+        <div style="font-size:0.75rem; color:#8CA0C2;">{sub}</div>
+      </div>
+    </div>
+    """
+
+
 def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
     """
     Package only the available, factual evidence for a selected anomaly into
@@ -456,94 +581,271 @@ if filtered_df.empty:
 
 
 # ============================================================
-# KPI SECTION (always visible, above tabs)
+# OVERVIEW -- KPI cards, main chart + latest event panel,
+# key features / recent anomalies / quick insights
+# (layout modeled on the reference dashboard, light theme)
 # ============================================================
 
 total_observations = len(filtered_df)
 total_anomalies = int(filtered_df["anomaly_flag"].sum()) if total_observations else 0
 anomaly_rate = (total_anomalies / total_observations * 100) if total_observations else None
-max_temperature = (
-    filtered_df["inverter_temperature_c"].max()
-    if "inverter_temperature_c" in filtered_df.columns and total_observations
+normal_rate = (100 - anomaly_rate) if anomaly_rate is not None else None
+
+persistent_events = compute_persistent_events(filtered_df)
+latest_event = persistent_events[-1] if persistent_events else None
+
+latest_row = filtered_df.sort_values("timestamp").iloc[-1] if total_observations else None
+is_anomalous_now = bool(latest_row["anomaly_flag"]) if latest_row is not None else False
+latest_ratio = (
+    latest_row.get("anomaly_score_ratio")
+    if latest_row is not None and "anomaly_score_ratio" in filtered_df.columns
     else None
 )
+severity_percentile = None
+if (
+    latest_ratio is not None and not pd.isna(latest_ratio)
+    and "anomaly_score_ratio" in filtered_df.columns and total_observations > 1
+):
+    all_ratios = filtered_df["anomaly_score_ratio"].dropna()
+    if len(all_ratios) > 1:
+        severity_percentile = (all_ratios <= latest_ratio).mean() * 100
 
-kpi_cols = st.columns(4)
+kpi_cols = st.columns(5)
 with kpi_cols[0]:
-    st.metric("Total Observations", f"{total_observations:,}")
+    st.markdown(
+        kpi_card_html(
+            "⚠️" if is_anomalous_now else "✅",
+            "#FDE8E8" if is_anomalous_now else "#E3F6EA",
+            "Current Status",
+            "ANOMALY DETECTED" if is_anomalous_now else "NORMAL",
+            "Most recent observation in range",
+            DANGER if is_anomalous_now else "#2E8B57",
+        ),
+        unsafe_allow_html=True,
+    )
 with kpi_cols[1]:
-    st.metric("Anomalous Observations", f"{total_anomalies:,}")
+    st.markdown(
+        kpi_card_html(
+            "📊", "#E9EEF9", "Anomaly Score",
+            fmt_num(latest_ratio, 1, "×") if latest_ratio is not None else "—",
+            "Most recent reading, vs. threshold 1.0×",
+        ),
+        unsafe_allow_html=True,
+    )
 with kpi_cols[2]:
-    st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
+    ring_color = ACCENT if (severity_percentile or 0) < 66 else ACCENT2 if (severity_percentile or 0) < 90 else DANGER
+    st.markdown(
+        f'<div style="background:#FFFFFF; border:1px solid {BORDER}; border-radius:10px; '
+        f'padding:0.7rem 1rem; height:100%; display:flex; align-items:center; gap:0.8rem;">'
+        f'{ring_gauge_html(severity_percentile, ring_color, "Severity")}'
+        f'<div><div style="font-size:0.8rem; color:{MUTED};">Severity Percentile</div>'
+        f'<div style="font-size:0.75rem; color:#8CA0C2;">vs. other readings in range</div></div></div>',
+        unsafe_allow_html=True,
+    )
 with kpi_cols[3]:
-    if "inverter_temperature_c" in filtered_df.columns:
-        st.metric("Max Inverter Temperature", fmt_num(max_temperature, 1, " °C"))
-    else:
-        st.metric("Max Inverter Temperature", "—")
+    st.markdown(
+        kpi_card_html(
+            "🗓️", "#E9EEF9", "Persistent Events",
+            f"{len(persistent_events)}",
+            "Grouped anomaly runs in range",
+        ),
+        unsafe_allow_html=True,
+    )
+with kpi_cols[4]:
+    st.markdown(
+        kpi_card_html(
+            "✅", "#E3F6EA", "Normal-Operation Rate",
+            fmt_num(normal_rate, 1, "%"),
+            "Share of readings not flagged",
+            "#2E8B57",
+        ),
+        unsafe_allow_html=True,
+    )
 
-st.divider()
+st.write("")
 
 
-# ============================================================
-# ANOMALY TIMELINE
-# ============================================================
+# ------------------------------------------------------------
+# Main chart (left) + Latest Event Details (right)
+# ------------------------------------------------------------
+main_col, side_col = st.columns([2.1, 1])
 
-if True:
-    st.subheader("Anomaly Timeline")
-    st.caption("Reconstruction error over time. Points above the threshold are flagged as anomalies.")
-
+with main_col:
+    st.markdown("##### Reconstruction Error & Anomaly Detection")
     if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
         fig = go.Figure()
+
+        # Shade each persistent event so runs of anomalies read as one
+        # event, the way "Persistent Event" / "Short Event" are called
+        # out in the reference design.
+        for ev in persistent_events:
+            fig.add_vrect(
+                x0=ev["start"], x1=ev["end"],
+                fillcolor=DANGER, opacity=0.10, line_width=0,
+            )
+
         fig.add_trace(
             go.Scatter(
-                x=filtered_df["timestamp"],
-                y=filtered_df["reconstruction_error"],
-                mode="lines",
-                name="Reconstruction Error",
-                line=dict(color=ACCENT, width=1.5),
+                x=filtered_df["timestamp"], y=filtered_df["reconstruction_error"],
+                mode="lines", name="Reconstruction Error", line=dict(color=ACCENT, width=1.5),
             )
         )
+
+        # Threshold isn't stored directly, but anomaly_score_ratio is
+        # defined as reconstruction_error / threshold -- so the threshold
+        # can be recovered exactly from rows where the ratio is known,
+        # rather than guessed or hard-coded.
+        valid_ratio = filtered_df[filtered_df.get("anomaly_score_ratio", pd.Series(dtype=float)) > 0]
+        threshold_est = None
+        if len(valid_ratio) > 0:
+            threshold_est = (valid_ratio["reconstruction_error"] / valid_ratio["anomaly_score_ratio"]).median()
+        if threshold_est is not None and not pd.isna(threshold_est):
+            fig.add_hline(
+                y=threshold_est, line_dash="dash", line_color=DANGER, line_width=1.5,
+                annotation_text=f"Threshold ({threshold_est:.6g})", annotation_position="top left",
+            )
 
         anomaly_points = filtered_df[filtered_df["anomaly_flag"]]
         if len(anomaly_points) > 0:
             fig.add_trace(
                 go.Scatter(
-                    x=anomaly_points["timestamp"],
-                    y=anomaly_points["reconstruction_error"],
-                    mode="markers",
-                    name="Flagged anomaly",
-                    marker=dict(size=8, color=DANGER, symbol="circle"),
+                    x=anomaly_points["timestamp"], y=anomaly_points["reconstruction_error"],
+                    mode="markers", name="Anomaly", marker=dict(size=7, color=DANGER),
                 )
             )
 
-        # Reconstruction error can legitimately be 0 or negative-adjacent
-        # (near-perfect reconstruction). A log y-axis silently drops those
-        # points instead of showing them at the bottom, which reads as
-        # "missing" data. Use log scale only when every value is strictly
-        # positive; otherwise fall back to linear so nothing is hidden.
         err_series = pd.to_numeric(filtered_df["reconstruction_error"], errors="coerce").dropna()
         use_log = len(err_series) > 0 and (err_series > 0).all()
 
         fig.update_layout(
-            xaxis_title="Time",
-            yaxis_title="Reconstruction Error",
+            xaxis_title="Time", yaxis_title="Reconstruction Error",
             yaxis_type="log" if use_log else "linear",
-            hovermode="x unified",
-            height=440,
-            template=PLOTLY_TEMPLATE,
-            paper_bgcolor=PANEL,
-            plot_bgcolor=PANEL,
-            margin=dict(t=20),
+            hovermode="x unified", height=430,
+            template=PLOTLY_TEMPLATE, paper_bgcolor=PANEL, plot_bgcolor=PANEL,
+            margin=dict(t=30), showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
         st.plotly_chart(fig, width="stretch")
-        if not use_log:
-            st.caption(
-                "Linear scale used here because reconstruction error includes "
-                "values at or near zero; a log scale would hide them."
-            )
+        st.caption(
+            "Shaded bands mark grouped persistent events; the dashed line is the "
+            "detection threshold recovered from anomaly_score_ratio. "
+            f"{'Linear scale used because some values are at/near zero.' if not use_log else ''}"
+        )
     else:
         st.info("No reconstruction-error data available for the selected period.")
+
+with side_col:
+    st.markdown("##### Latest Event Details")
+    if latest_event is not None:
+        tag = "Persistent Event" if latest_event["count"] > 1 else "Single Reading"
+        st.markdown(
+            f'<div style="background:#FFFFFF; border:1px solid {BORDER}; border-radius:10px; '
+            f'padding:1rem; height:430px; overflow-y:auto;">'
+            f'<span style="background:{"#FDE8E8" if latest_event["count"]>1 else "#F0F4F9"}; color:{DANGER if latest_event["count"]>1 else ACCENT}; '
+            f'padding:0.15rem 0.6rem; border-radius:999px; font-size:0.75rem;">{tag}</span>'
+            f'<div style="font-weight:700; font-size:1.05rem; margin-top:0.6rem;">'
+            f'{fmt_time(latest_event["start"]).split(" ")[1]} – {fmt_time(latest_event["end"]).split(" ")[1]} '
+            f'({latest_event["duration_min"]:.0f} min)</div>'
+            f'<div style="color:{MUTED}; font-size:0.82rem; margin-bottom:0.8rem;">{fmt_time(latest_event["start"])}</div>'
+            f'<div style="display:flex; gap:1.2rem; margin-bottom:0.7rem;">'
+            f'<div><div style="font-size:0.75rem; color:{MUTED};">Peak Score</div>'
+            f'<div style="font-weight:700;">{fmt_num(latest_event["peak_score"],1,"×")}</div></div>'
+            f'<div><div style="font-size:0.75rem; color:{MUTED};">Readings</div>'
+            f'<div style="font-weight:700;">{latest_event["count"]}</div></div></div>'
+            + (
+                f'<div style="font-size:0.75rem; color:{MUTED};">Top Contributing Feature</div>'
+                f'<div style="font-weight:600;">{feature_icon(latest_event["top_feature"])} {latest_event["top_feature"]}'
+                + (f' — {latest_event["top_feature_pct"]:.1f}% avg contribution' if latest_event["top_feature_pct"] is not None else "")
+                + '</div>'
+                if latest_event["top_feature"] else ""
+            )
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("No anomalies in the current selection.")
+
+st.write("")
+
+
+# ------------------------------------------------------------
+# Key Features / Recent Anomalies / Quick Insights
+# ------------------------------------------------------------
+feat_col, recent_col, insight_col = st.columns([1, 1.3, 1])
+
+anomaly_df_all = filtered_df[filtered_df["anomaly_flag"]].copy() if total_observations else filtered_df.copy()
+contribution_cols_all = get_contribution_cols(filtered_df)
+
+with feat_col:
+    st.markdown("##### Key Features (Top Contributors)")
+    if contribution_cols_all and len(anomaly_df_all) > 0:
+        avg_contrib = anomaly_df_all[contribution_cols_all].mean(numeric_only=True).dropna().sort_values(ascending=False)
+        palette = [ACCENT, ACCENT2, DANGER, BLUE, "#8B7EC8", "#5B6B82"]
+        for i, (col, val) in enumerate(avg_contrib.items()):
+            feature_name = col.replace("_contribution_pct", "")
+            color = palette[i % len(palette)]
+            st.markdown(
+                f'<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.55rem;">'
+                f'<div style="width:1.3rem;">{feature_icon(feature_name)}</div>'
+                f'<div style="flex:1;">'
+                f'<div style="font-size:0.82rem; color:{TEXT}; margin-bottom:2px;">{feature_name}</div>'
+                f'<div style="background:#EEF1F6; border-radius:6px; height:8px; width:100%;">'
+                f'<div style="background:{color}; border-radius:6px; height:8px; width:{min(val,100):.1f}%;"></div>'
+                f'</div></div>'
+                f'<div style="width:3rem; text-align:right; font-size:0.82rem; color:{MUTED};">{val:.1f}%</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        st.caption("Average contribution to reconstruction error across current anomalies, not a confirmed cause.")
+    else:
+        st.info("No feature-contribution data available for this selection.")
+
+with recent_col:
+    st.markdown("##### Recent Anomalies")
+    if len(anomaly_df_all) > 0:
+        recent = anomaly_df_all.sort_values("timestamp", ascending=False).head(7)
+        show_cols = [c for c in ["timestamp", "reconstruction_error", "anomaly_score_ratio", "top_contributing_feature"] if c in recent.columns]
+        display_recent = recent[show_cols].rename(columns={
+            "timestamp": "Time", "reconstruction_error": "Recon. Error",
+            "anomaly_score_ratio": "Score", "top_contributing_feature": "Top Feature",
+        })
+        st.dataframe(display_recent, width="stretch", hide_index=True, height=280)
+        st.caption(f"Showing {len(recent)} of {len(anomaly_df_all)} anomalies in range.")
+    else:
+        st.success("No anomalies detected in the selected period.")
+
+with insight_col:
+    st.markdown("##### Quick Insights")
+    st.caption("Computed directly from the data above -- not a separate AI call.")
+    bullets = []
+    if latest_event is not None:
+        if latest_event["count"] > 1:
+            bullets.append(
+                f"🔴 Persistent anomaly from {fmt_time(latest_event['start']).split(' ')[1]} to "
+                f"{fmt_time(latest_event['end']).split(' ')[1]} ({latest_event['duration_min']:.0f} min, "
+                f"{latest_event['count']} readings)."
+            )
+        else:
+            bullets.append(f"🟠 A single flagged reading at {fmt_time(latest_event['start'])}.")
+        if latest_event["top_feature"]:
+            bullets.append(
+                f"🌡️ **{latest_event['top_feature']}** contributed most to reconstruction error in the latest event."
+            )
+    if len(persistent_events) > 1:
+        bullets.append(f"ℹ️ {len(persistent_events)} separate persistent events detected in the selected range.")
+    if total_observations:
+        bullets.append(
+            f"✅ {total_anomalies:,} of {total_observations:,} readings flagged "
+            f"({fmt_num(anomaly_rate, 2, '%')}) in the selected period."
+        )
+    if not bullets:
+        bullets.append("No anomalies in the current selection.")
+    for b in bullets:
+        st.markdown(
+            f'<div style="background:#FFFFFF; border:1px solid {BORDER}; border-radius:8px; '
+            f'padding:0.6rem 0.8rem; margin-bottom:0.5rem; font-size:0.85rem;">{b}</div>',
+            unsafe_allow_html=True,
+        )
 
 st.divider()
 
