@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import requests
 import streamlit as st
 
@@ -699,79 +700,63 @@ if True:
         trend_window, window_start = get_trend_window(trend_df, end_time, hours_back=24)
 
         if len(trend_window) > 0:
-            fig_trend = go.Figure()
+            # --- Fix: three series sharing one plot area with three
+            # overlaid y-axes is inherently misleading -- each axis
+            # autoscales independently, so lines visually "cross" or
+            # "track together" at points that mean nothing (a temperature
+            # line dipping through a power line is not a relationship,
+            # just two unrelated scales drawn on top of each other). That
+            # is what read as "wrong info". Fixed by giving each series
+            # its own stacked panel with its own y-axis, sharing only the
+            # time axis -- nothing is ever plotted against the wrong scale.
+            panel_specs = [
+                ("ac_power_kw", "AC Power (kW)", ACCENT),
+                ("dc_current_a", "DC Current (A)", ACCENT2),
+                ("inverter_temperature_c", "Inverter Temp (°C)", DANGER),
+            ]
+            panel_specs = [p for p in panel_specs if p[0] in trend_window.columns]
 
-            if "ac_power_kw" in trend_window.columns:
-                fig_trend.add_trace(
-                    go.Scatter(
-                        x=trend_window["timestamp"], y=trend_window["ac_power_kw"],
-                        mode="lines", name="AC Power (kW)", yaxis="y", line=dict(color=ACCENT),
-                    )
-                )
-            if "dc_current_a" in trend_window.columns:
-                fig_trend.add_trace(
-                    go.Scatter(
-                        x=trend_window["timestamp"], y=trend_window["dc_current_a"],
-                        mode="lines", name="DC Current (A)", yaxis="y2", line=dict(color=ACCENT2),
-                    )
-                )
-            if "inverter_temperature_c" in trend_window.columns:
-                fig_trend.add_trace(
-                    go.Scatter(
-                        x=trend_window["timestamp"], y=trend_window["inverter_temperature_c"],
-                        mode="lines", name="Inverter Temperature (°C)", yaxis="y3",
-                        line=dict(color=DANGER),
-                    )
-                )
-
-            fig_trend.add_vline(x=end_time, line_dash="dash", line_width=2, line_color=DANGER)
-            fig_trend.add_annotation(
-                x=end_time, y=1.1, xref="x", yref="paper", showarrow=False,
-                text="Selected anomaly", font=dict(color=DANGER, size=12),
+            fig_trend = make_subplots(
+                rows=len(panel_specs), cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.06,
+                subplot_titles=[label for _, label, _ in panel_specs],
             )
 
-            # --- Fix: with 3 y-axes, the 3rd axis must be anchored "free"
-            # and the plotting area narrowed, or it renders on top of / at
-            # the same position as the 2nd axis, making both sets of tick
-            # labels overlap and misread against the wrong line -- this is
-            # what made the chart look like it had "false" values.
+            for i, (col, label, color) in enumerate(panel_specs, start=1):
+                fig_trend.add_trace(
+                    go.Scatter(
+                        x=trend_window["timestamp"], y=trend_window[col],
+                        mode="lines", name=label, line=dict(color=color),
+                        showlegend=False,
+                    ),
+                    row=i, col=1,
+                )
+                fig_trend.add_vline(
+                    x=end_time, line_dash="dash", line_width=1.5, line_color=DANGER,
+                    row=i, col=1,
+                )
+                fig_trend.update_yaxes(title_text=label, row=i, col=1)
+
+            fig_trend.update_xaxes(title_text="Time", row=len(panel_specs), col=1)
             fig_trend.update_layout(
-                title="AC Power, DC Current & Temperature — 24 Hours Before Anomaly",
-                xaxis=dict(title="Time", domain=[0.0, 0.86]),
-                yaxis=dict(
-                    title=dict(text="AC Power (kW)", font=dict(color=ACCENT)),
-                    tickfont=dict(color=ACCENT),
-                    side="left",
-                ),
-                yaxis2=dict(
-                    title=dict(text="DC Current (A)", font=dict(color=ACCENT2)),
-                    tickfont=dict(color=ACCENT2),
-                    overlaying="y", side="right", anchor="free", position=0.86,
-                    showgrid=False,
-                ),
-                yaxis3=dict(
-                    title=dict(text="Temperature (°C)", font=dict(color=DANGER)),
-                    tickfont=dict(color=DANGER),
-                    overlaying="y", side="right", anchor="free", position=1.0,
-                    showgrid=False,
-                ),
-                hovermode="x unified",
-                height=520,
+                title="AC Power, DC Current & Temperature — 24 Hours Before Anomaly (each on its own scale)",
+                height=180 * len(panel_specs) + 120,
                 template=PLOTLY_TEMPLATE,
                 paper_bgcolor=PANEL,
                 plot_bgcolor=PANEL,
-                legend=dict(orientation="h", yanchor="bottom", y=1.16, xanchor="center", x=0.43),
-                margin=dict(l=70, r=40, t=100, b=60),
+                hovermode="x unified",
+                margin=dict(l=70, r=30, t=70, b=50),
             )
             st.plotly_chart(fig_trend, width="stretch")
             st.caption(
                 f"Trend window: {fmt_time(trend_window['timestamp'].min())} → "
                 f"{fmt_time(trend_window['timestamp'].max())} "
-                f"({len(trend_window):,} observations). Each axis is colour-matched "
-                "to its line and positioned independently so the three series "
-                "cannot be misread against each other. This shows the historical "
-                "period leading up to the anomaly; it does not imply any single "
-                "variable caused it."
+                f"({len(trend_window):,} observations). Each variable has its own "
+                "panel and its own scale, so nothing is plotted against the wrong "
+                "axis. The dashed red line marks the selected anomaly. This shows "
+                "the historical period leading up to the anomaly; it does not "
+                "imply any single variable caused it."
             )
         else:
             st.info(
