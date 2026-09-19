@@ -236,7 +236,7 @@ def generate_ai_explanation(selected_anomaly):
     timestamp = clean_value(selected_anomaly.get("timestamp"))
     inverter_id = clean_value(selected_anomaly.get("inverter_id")) if "inverter_id" in selected_anomaly.index else None
     evidence = {}
-    messages = [{"role":"system","content":"You are an industrial inverter anomaly explanation assistant.
+    system_prompt = """You are an industrial inverter anomaly explanation assistant.
 
 Use only evidence returned by the supplied tools and the selected anomaly context.
 
@@ -268,7 +268,9 @@ Give exactly these 4 short sections:
 **Why it was flagged:** Briefly explain the unusual change in normal language.
 **What to check:** Give 1–2 practical checks.
 
-Keep the total response under 80 words. Do not add extra sections, technical explanations, or ML terminology. If the evidence is insufficient, say so briefly rather than guessing."},{"role":"user","content":json.dumps({"selected_timestamp":timestamp,"inverter_id":inverter_id,"selected_row":row_to_dict(selected_anomaly)},default=str)}]
+Keep the total response under 80 words. Do not add extra sections, technical explanations, or ML terminology. If the evidence is insufficient, say so briefly rather than guessing.
+"""
+messages = [{"role":"system","content":system_prompt},{"role":"user","content":json.dumps({"selected_timestamp":timestamp,"inverter_id":inverter_id,"selected_row":row_to_dict(selected_anomaly)},default=str)}]
     for _ in range(6):
         response = client.chat.completions.create(model="openai/gpt-oss-120b",messages=messages,tools=AI_TOOLS,tool_choice="auto",temperature=0.2)
         msg = response.choices[0].message
