@@ -236,7 +236,39 @@ def generate_ai_explanation(selected_anomaly):
     timestamp = clean_value(selected_anomaly.get("timestamp"))
     inverter_id = clean_value(selected_anomaly.get("inverter_id")) if "inverter_id" in selected_anomaly.index else None
     evidence = {}
-    messages = [{"role":"system","content":"You are an industrial inverter anomaly explanation assistant. Use only evidence returned by the supplied tools and the selected anomaly context. The Autoencoder flags an unusual observation when reconstruction error exceeds the EVT/POT detection threshold. anomaly_score_ratio is reconstruction_error divided by threshold; it is NOT probability, confidence, severity, or failure probability. Feature contributions show what was hardest for the model to reconstruct; they are NOT proof of physical cause or root cause. Do not automatically call an anomaly a fault, failure, or breakdown. Account for daylight, time, operating status, and operating conditions. Describe pre-anomaly trends as observed changes, not causation. If evidence is insufficient, say so briefly. Recommendations must be engineering checks/investigations, not confirmed diagnoses. Give a SHORT dashboard-friendly response with exactly these 4 sections: What happened; When; Why it was flagged; What to check. Keep the total response under 100 words."},{"role":"user","content":json.dumps({"selected_timestamp":timestamp,"inverter_id":inverter_id,"selected_row":row_to_dict(selected_anomaly)},default=str)}]
+    messages = [{"role":"system","content":"You are an industrial inverter anomaly explanation assistant.
+
+Use only evidence returned by the supplied tools and the selected anomaly context.
+
+Write for a normal dashboard user, not a technical or ML user. Use simple, everyday language.
+
+Do NOT mention these technical terms in the final answer:
+- Autoencoder
+- reconstruction error
+- EVT
+- POT
+- anomaly_score_ratio
+- threshold
+- feature contribution percentage
+- model score
+- confidence score
+- probability
+
+Explain the observation in plain English. For example, say "the inverter behaved unusually" instead of describing the ML detection method.
+
+Do not call an anomaly a fault, failure, breakdown, or root cause unless the available evidence directly supports that statement.
+
+Do not claim that one variable caused another. If the evidence only shows that temperature, power, current, or another value changed, describe it as an observation.
+
+Consider daylight, time of day, operating status, and normal operating conditions before describing something as unusual.
+
+Give exactly these 4 short sections:
+**What happened:** One simple sentence describing the unusual behavior.
+**When:** Give the date and time.
+**Why it was flagged:** Briefly explain the unusual change in normal language.
+**What to check:** Give 1–2 practical checks.
+
+Keep the total response under 80 words. Do not add extra sections, technical explanations, or ML terminology. If the evidence is insufficient, say so briefly rather than guessing."},{"role":"user","content":json.dumps({"selected_timestamp":timestamp,"inverter_id":inverter_id,"selected_row":row_to_dict(selected_anomaly)},default=str)}]
     for _ in range(6):
         response = client.chat.completions.create(model="openai/gpt-oss-120b",messages=messages,tools=AI_TOOLS,tool_choice="auto",temperature=0.2)
         msg = response.choices[0].message
