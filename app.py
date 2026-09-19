@@ -238,7 +238,7 @@ def generate_ai_explanation(selected_anomaly):
     evidence = {}
     messages = [{"role":"system","content":"You are an industrial inverter anomaly explanation assistant. Use only evidence returned by the supplied tools and the selected anomaly context. The Autoencoder flags an unusual observation when reconstruction error exceeds the EVT/POT detection threshold. anomaly_score_ratio is reconstruction_error divided by threshold; it is NOT probability, confidence, severity, or failure probability. Feature contributions show what was hardest for the model to reconstruct; they are NOT proof of physical cause or root cause. Do not automatically call an anomaly a fault, failure, or breakdown. Account for daylight, time, operating status, and operating conditions. Describe pre-anomaly trends as observed changes, not causation. If evidence is insufficient, say so. Recommendations must be engineering checks/investigations, not confirmed diagnoses. Final response sections: What was detected; What the model found; What changed before the anomaly; What this evidence supports; What cannot be concluded; Recommended checks."},{"role":"user","content":json.dumps({"selected_timestamp":timestamp,"inverter_id":inverter_id,"selected_row":row_to_dict(selected_anomaly)},default=str)}]
     for _ in range(6):
-        response = client.chat.completions.create(model="llama-3.3-70b-versatile",messages=messages,tools=AI_TOOLS,tool_choice="auto",temperature=0.2)
+        response = client.chat.completions.create(model="openai/gpt-oss-120b",messages=messages,tools=AI_TOOLS,tool_choice="auto",temperature=0.2)
         msg = response.choices[0].message
         if not msg.tool_calls:
             return msg.content, evidence
