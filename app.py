@@ -31,12 +31,114 @@ st.set_page_config(
     layout="wide",
 )
 
-# Light, minimal styling -- no dark/neon theme, no animation.
+# Light, professional styling -- no dark/neon theme, no animation.
 st.markdown(
     """
     <style>
-    .block-container {padding-top: 1.5rem; padding-bottom: 2rem;}
-    [data-testid="stMetricValue"] {font-size: 1.4rem;}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    :root {
+        --accent: #0F3554;
+        --accent-light: #E8EFF6;
+        --border: #E2E8F0;
+        --muted: #64748B;
+        --surface: #FFFFFF;
+        --bg: #F7F9FC;
+    }
+
+    .stApp { background-color: var(--bg); }
+
+    .block-container {
+        padding-top: 1.6rem;
+        padding-bottom: 3rem;
+        max-width: 1300px;
+    }
+
+    /* Metric / KPI cards */
+    [data-testid="stMetric"] {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 1rem 1.1rem;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #0F172A;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
+    /* Section headers */
+    h3, .stSubheader, [data-testid="stMarkdownContainer"] h3 {
+        color: #0F172A;
+        font-weight: 700;
+    }
+    h4 {
+        color: #1E293B;
+        font-weight: 600;
+    }
+
+    /* Dividers a bit lighter */
+    hr { border-color: var(--border) !important; }
+
+    /* Buttons */
+    .stButton > button {
+        border-radius: 8px;
+        font-weight: 600;
+        border: 1px solid var(--border);
+    }
+    .stButton > button[kind="primary"] {
+        background-color: var(--accent);
+        border-color: var(--accent);
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #0B2740;
+        border-color: #0B2740;
+    }
+
+    /* Tabs / expanders */
+    .streamlit-expanderHeader {
+        font-weight: 600;
+        border-radius: 8px;
+    }
+    [data-testid="stExpander"] {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+    }
+
+    /* Dataframes */
+    [data-testid="stDataFrame"] {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    /* Selectbox / date input / checkbox labels */
+    label, .stSelectbox label, .stDateInput label {
+        font-weight: 600 !important;
+        font-size: 0.85rem !important;
+        color: #334155 !important;
+    }
+
+    /* Card wrapper used for AI explanation panels */
+    .pro-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -49,6 +151,7 @@ st.session_state.setdefault("last_ai_evidence", None)
 # ============================================================
 # DATA LOADING (cached -- parquet is read once per session)
 # ============================================================
+
 
 @st.cache_data
 def load_dashboard_data(path="dashboard_data.parquet"):
@@ -95,6 +198,7 @@ if df.empty:
 # ============================================================
 # SMALL HELPERS
 # ============================================================
+
 
 def fmt_num(value, decimals=2, suffix="", dash="—"):
     """Format a possibly-missing numeric value; never raises on NaN/None."""
@@ -177,13 +281,39 @@ def get_pre_anomaly_trend(timestamp, inverter_id=None, hours=24):
         source = source[source["inverter_id"].astype(str) == str(inverter_id)]
     if source.empty:
         return {"error": "No trend observations found for the requested window."}
-    numeric = [c for c in ["ac_power_kw", "dc_power_kw", "dc_current_a", "ac_current_a", "inverter_temperature_c", "ambient_temperature_c", "inverter_ambient_temp_delta", "efficiency_pct", "power_factor"] if c in source.columns]
+    numeric = [
+        c
+        for c in [
+            "ac_power_kw",
+            "dc_power_kw",
+            "dc_current_a",
+            "ac_current_a",
+            "inverter_temperature_c",
+            "ambient_temperature_c",
+            "inverter_ambient_temp_delta",
+            "efficiency_pct",
+            "power_factor",
+        ]
+        if c in source.columns
+    ]
     stats = {}
     for col in numeric:
         series = pd.to_numeric(source[col], errors="coerce").dropna()
         if len(series) >= 2:
-            stats[col] = {"start": clean_value(series.iloc[0]), "end": clean_value(series.iloc[-1]), "net_change": clean_value(series.iloc[-1] - series.iloc[0]), "min": clean_value(series.min()), "max": clean_value(series.max()), "median": clean_value(series.median())}
-    return {"window_start": clean_value(source["timestamp"].min()), "window_end": clean_value(source["timestamp"].max()), "observations": int(len(source)), "statistics": stats}
+            stats[col] = {
+                "start": clean_value(series.iloc[0]),
+                "end": clean_value(series.iloc[-1]),
+                "net_change": clean_value(series.iloc[-1] - series.iloc[0]),
+                "min": clean_value(series.min()),
+                "max": clean_value(series.max()),
+                "median": clean_value(series.median()),
+            }
+    return {
+        "window_start": clean_value(source["timestamp"].min()),
+        "window_end": clean_value(source["timestamp"].max()),
+        "observations": int(len(source)),
+        "statistics": stats,
+    }
 
 
 def get_feature_contributions(timestamp, inverter_id=None):
@@ -196,9 +326,20 @@ def get_feature_contributions(timestamp, inverter_id=None):
     idx = (source["timestamp"] - target).abs().idxmin()
     row = source.loc[idx]
     cols = [c for c in source.columns if c.endswith("_contribution_pct")]
-    values = [{"feature": c.replace("_contribution_pct", ""), "contribution_pct": clean_value(row.get(c))} for c in cols if pd.notna(row.get(c))]
-    values.sort(key=lambda x: x["contribution_pct"] if x["contribution_pct"] is not None else -1, reverse=True)
-    return {"timestamp": clean_value(row.get("timestamp")), "top_contributing_feature": clean_value(row.get("top_contributing_feature")), "contributions": values}
+    values = [
+        {"feature": c.replace("_contribution_pct", ""), "contribution_pct": clean_value(row.get(c))}
+        for c in cols
+        if pd.notna(row.get(c))
+    ]
+    values.sort(
+        key=lambda x: x["contribution_pct"] if x["contribution_pct"] is not None else -1,
+        reverse=True,
+    )
+    return {
+        "timestamp": clean_value(row.get("timestamp")),
+        "top_contributing_feature": clean_value(row.get("top_contributing_feature")),
+        "contributions": values,
+    }
 
 
 def get_operating_context(timestamp, inverter_id=None):
@@ -210,31 +351,115 @@ def get_operating_context(timestamp, inverter_id=None):
         return {"error": "No matching data found."}
     idx = (source["timestamp"] - target).abs().idxmin()
     row = source.loc[idx]
-    wanted = ["timestamp", "inverter_id", "hour", "minute", "month", "is_daylight", "inverter_status", "dc_power_kw", "ac_power_kw", "dc_current_a", "ac_current_a", "power_factor", "frequency_hz", "efficiency_pct", "inverter_temperature_c", "ambient_temperature_c", "poa_w_m2", "ghi_w_m2", "quality_code_inv", "communication_status_inv"]
+    wanted = [
+        "timestamp",
+        "inverter_id",
+        "hour",
+        "minute",
+        "month",
+        "is_daylight",
+        "inverter_status",
+        "dc_power_kw",
+        "ac_power_kw",
+        "dc_current_a",
+        "ac_current_a",
+        "power_factor",
+        "frequency_hz",
+        "efficiency_pct",
+        "inverter_temperature_c",
+        "ambient_temperature_c",
+        "poa_w_m2",
+        "ghi_w_m2",
+        "quality_code_inv",
+        "communication_status_inv",
+    ]
     return {k: clean_value(row.get(k)) for k in wanted if k in source.columns}
 
 
 AI_TOOLS = [
-    {"type":"function","function":{"name":"get_anomaly_details","description":"Retrieve the selected anomaly observation and model outputs.","parameters":{"type":"object","properties":{"timestamp":{"type":"string"},"inverter_id":{"type":"string"}},"required":["timestamp"],"additionalProperties":False}}},
-    {"type":"function","function":{"name":"get_pre_anomaly_trend","description":"Retrieve descriptive statistics for the 24 hours before the selected anomaly.","parameters":{"type":"object","properties":{"timestamp":{"type":"string"},"inverter_id":{"type":"string"},"hours":{"type":"number"}},"required":["timestamp"],"additionalProperties":False}}},
-    {"type":"function","function":{"name":"get_feature_contributions","description":"Retrieve feature contributions to reconstruction error for the selected anomaly.","parameters":{"type":"object","properties":{"timestamp":{"type":"string"},"inverter_id":{"type":"string"}},"required":["timestamp"],"additionalProperties":False}}},
-    {"type":"function","function":{"name":"get_operating_context","description":"Retrieve daylight, status, power, environmental, and communication context at the selected anomaly.","parameters":{"type":"object","properties":{"timestamp":{"type":"string"},"inverter_id":{"type":"string"}},"required":["timestamp"],"additionalProperties":False}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "get_anomaly_details",
+            "description": "Retrieve the selected anomaly observation and model outputs.",
+            "parameters": {
+                "type": "object",
+                "properties": {"timestamp": {"type": "string"}, "inverter_id": {"type": "string"}},
+                "required": ["timestamp"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_pre_anomaly_trend",
+            "description": "Retrieve descriptive statistics for the 24 hours before the selected anomaly.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "timestamp": {"type": "string"},
+                    "inverter_id": {"type": "string"},
+                    "hours": {"type": "number"},
+                },
+                "required": ["timestamp"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_feature_contributions",
+            "description": "Retrieve feature contributions to reconstruction error for the selected anomaly.",
+            "parameters": {
+                "type": "object",
+                "properties": {"timestamp": {"type": "string"}, "inverter_id": {"type": "string"}},
+                "required": ["timestamp"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_operating_context",
+            "description": "Retrieve daylight, status, power, environmental, and communication context at the selected anomaly.",
+            "parameters": {
+                "type": "object",
+                "properties": {"timestamp": {"type": "string"}, "inverter_id": {"type": "string"}},
+                "required": ["timestamp"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
+
 def execute_ai_tool(name, args):
-    if name == "get_anomaly_details": return get_anomaly_details(**args)
-    if name == "get_pre_anomaly_trend": return get_pre_anomaly_trend(**args)
-    if name == "get_feature_contributions": return get_feature_contributions(**args)
-    if name == "get_operating_context": return get_operating_context(**args)
+    if name == "get_anomaly_details":
+        return get_anomaly_details(**args)
+    if name == "get_pre_anomaly_trend":
+        return get_pre_anomaly_trend(**args)
+    if name == "get_feature_contributions":
+        return get_feature_contributions(**args)
+    if name == "get_operating_context":
+        return get_operating_context(**args)
     return {"error": f"Unknown tool: {name}"}
 
 
 def generate_ai_explanation(selected_anomaly):
     client = get_groq_client()
     if client is None:
-        raise RuntimeError("GROQ_API_KEY is not configured. Add [groq] api_key to Streamlit Cloud Secrets.")
+        raise RuntimeError(
+            "GROQ_API_KEY is not configured. Add [groq] api_key to Streamlit Cloud Secrets."
+        )
     timestamp = clean_value(selected_anomaly.get("timestamp"))
-    inverter_id = clean_value(selected_anomaly.get("inverter_id")) if "inverter_id" in selected_anomaly.index else None
+    inverter_id = (
+        clean_value(selected_anomaly.get("inverter_id"))
+        if "inverter_id" in selected_anomaly.index
+        else None
+    )
     evidence = {}
     system_prompt = """You are an industrial inverter anomaly explanation assistant.
 
@@ -270,20 +495,70 @@ Give exactly these 4 short sections:
 
 Keep the total response under 80 words. Do not add extra sections, technical explanations, or ML terminology. If the evidence is insufficient, say so briefly rather than guessing.
 """
-messages = [{"role":"system","content":system_prompt},{"role":"user","content":json.dumps({"selected_timestamp":timestamp,"inverter_id":inverter_id,"selected_row":row_to_dict(selected_anomaly)},default=str)}]
-for _ in range(6):
-        response = client.chat.completions.create(model="openai/gpt-oss-120b",messages=messages,tools=AI_TOOLS,tool_choice="auto",temperature=0.2)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "selected_timestamp": timestamp,
+                    "inverter_id": inverter_id,
+                    "selected_row": row_to_dict(selected_anomaly),
+                },
+                default=str,
+            ),
+        },
+    ]
+
+    for _ in range(6):
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=messages,
+            tools=AI_TOOLS,
+            tool_choice="auto",
+            temperature=0.2,
+        )
         msg = response.choices[0].message
+
         if not msg.tool_calls:
             return msg.content, evidence
-        messages.append({"role":"assistant","content":msg.content or "","tool_calls":[{"id":tc.id,"type":"function","function":{"name":tc.function.name,"arguments":tc.function.arguments}} for tc in msg.tool_calls]})
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
+            }
+        )
+
         for tc in msg.tool_calls:
-            try: args=json.loads(tc.function.arguments)
-            except Exception: args={}
-            result=execute_ai_tool(tc.function.name,args)
-            evidence[tc.function.name]=result
-            messages.append({"role":"tool","tool_call_id":tc.id,"content":json.dumps(result,default=str)})
-    raise RuntimeError("AI investigation reached the maximum tool-call steps without producing an explanation.")
+            try:
+                args = json.loads(tc.function.arguments)
+            except Exception:
+                args = {}
+            result = execute_ai_tool(tc.function.name, args)
+            evidence[tc.function.name] = result
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(result, default=str),
+                }
+            )
+
+    raise RuntimeError(
+        "AI investigation reached the maximum tool-call steps without producing an explanation."
+    )
 
 
 def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
@@ -359,8 +634,15 @@ def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
 
     if trend_window is not None and len(trend_window) > 0:
         numeric_cols = [
-            c for c in ["ac_power_kw", "dc_current_a", "dc_power_kw", "inverter_temperature_c",
-                        "inverter_ambient_temp_delta", "ambient_temperature_c"]
+            c
+            for c in [
+                "ac_power_kw",
+                "dc_current_a",
+                "dc_power_kw",
+                "inverter_temperature_c",
+                "inverter_ambient_temp_delta",
+                "ambient_temperature_c",
+            ]
             if c in trend_window.columns
         ]
         stats = {}
@@ -391,16 +673,30 @@ def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
 st.markdown(
     """
     <div style="
-        background-color:#0F3554;
-        padding:1.6rem 1.8rem;
-        border-radius:8px;
-        margin-bottom:1.4rem;
+        background: linear-gradient(135deg, #0F3554 0%, #164A73 100%);
+        padding: 1.8rem 2rem;
+        border-radius: 12px;
+        margin-bottom: 1.6rem;
+        box-shadow: 0 4px 14px rgba(15, 53, 84, 0.18);
+        display: flex;
+        align-items: center;
+        gap: 1rem;
     ">
-        <div style="color:#FFFFFF; font-size:1.9rem; font-weight:600; line-height:1.2;">
-            ⚡ Inverter Anomaly Detection Dashboard
-        </div>
-        <div style="color:#CBD9E5; font-size:0.95rem; margin-top:0.3rem;">
-            Autoencoder-based anomaly detection with EVT/POT reconstruction-error thresholding
+        <div style="
+            background: rgba(255,255,255,0.12);
+            width: 52px; height: 52px;
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.6rem;
+            flex-shrink: 0;
+        ">⚡</div>
+        <div>
+            <div style="color:#FFFFFF; font-size:1.65rem; font-weight:700; line-height:1.25;">
+                Inverter Anomaly Detection
+            </div>
+            <div style="color:#B9CFE2; font-size:0.92rem; margin-top:0.2rem;">
+                Autoencoder-based anomaly detection with EVT/POT reconstruction-error thresholding
+            </div>
         </div>
     </div>
     """,
@@ -416,6 +712,12 @@ min_date = df["timestamp"].min().date()
 max_date = df["timestamp"].max().date()
 
 show_inverter_filter = "inverter_id" in df.columns and df["inverter_id"].nunique() > 1
+
+st.markdown(
+    '<div class="pro-card" style="padding: 1rem 1.3rem 0.4rem; margin-bottom: 0.6rem;">',
+    unsafe_allow_html=True,
+)
+
 filter_cols = st.columns([2, 1, 1] if show_inverter_filter else [2, 1])
 
 with filter_cols[0]:
@@ -441,6 +743,7 @@ st.caption(
     "`anomaly_score_ratio` is reconstruction error divided by the detection "
     "threshold -- a ratio, not a probability."
 )
+st.markdown("</div>", unsafe_allow_html=True)
 st.divider()
 
 
@@ -465,7 +768,9 @@ if show_anomalies_only:
     filtered_df = filtered_df[filtered_df["anomaly_flag"]].copy()
 
 if filtered_df.empty:
-    st.warning("No observations match the current filters. Adjust the date range or filters in the sidebar.")
+    st.warning(
+        "No observations match the current filters. Adjust the date range or filters in the sidebar."
+    )
 
 
 # ============================================================
@@ -481,11 +786,22 @@ max_temperature = (
     else None
 )
 
+st.markdown(
+    "<div style='font-weight:700; font-size:0.95rem; color:#334155; "
+    "margin-bottom:0.5rem;'>Overview</div>",
+    unsafe_allow_html=True,
+)
+
 kpi_cols = st.columns(4)
 with kpi_cols[0]:
     st.metric("Total Observations", f"{total_observations:,}")
 with kpi_cols[1]:
-    st.metric("Anomalous Observations", f"{total_anomalies:,}")
+    st.metric(
+        "Anomalous Observations",
+        f"{total_anomalies:,}",
+        delta=f"{anomaly_rate:.1f}% of total" if anomaly_rate is not None else None,
+        delta_color="inverse",
+    )
 with kpi_cols[2]:
     st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
 with kpi_cols[3]:
@@ -557,13 +873,20 @@ with power_col1:
         fig_dc = go.Figure()
         fig_dc.add_trace(
             go.Scatter(
-                x=filtered_df["timestamp"], y=filtered_df["dc_power_kw"],
-                mode="lines", name="DC Power", line=dict(color="#4C78A8"),
+                x=filtered_df["timestamp"],
+                y=filtered_df["dc_power_kw"],
+                mode="lines",
+                name="DC Power",
+                line=dict(color="#4C78A8"),
             )
         )
         fig_dc.update_layout(
-            title="DC Power", xaxis_title="Time", yaxis_title="DC Power (kW)",
-            hovermode="x unified", height=380, template="plotly_white",
+            title="DC Power",
+            xaxis_title="Time",
+            yaxis_title="DC Power (kW)",
+            hovermode="x unified",
+            height=380,
+            template="plotly_white",
         )
         st.plotly_chart(fig_dc, width="stretch")
     else:
@@ -574,13 +897,20 @@ with power_col2:
         fig_ac = go.Figure()
         fig_ac.add_trace(
             go.Scatter(
-                x=filtered_df["timestamp"], y=filtered_df["ac_power_kw"],
-                mode="lines", name="AC Power", line=dict(color="#72B7B2"),
+                x=filtered_df["timestamp"],
+                y=filtered_df["ac_power_kw"],
+                mode="lines",
+                name="AC Power",
+                line=dict(color="#72B7B2"),
             )
         )
         fig_ac.update_layout(
-            title="AC Power", xaxis_title="Time", yaxis_title="AC Power (kW)",
-            hovermode="x unified", height=380, template="plotly_white",
+            title="AC Power",
+            xaxis_title="Time",
+            yaxis_title="AC Power (kW)",
+            hovermode="x unified",
+            height=380,
+            template="plotly_white",
         )
         st.plotly_chart(fig_ac, width="stretch")
     else:
@@ -605,21 +935,30 @@ with thermal_col1:
         if has_temp:
             fig_temp.add_trace(
                 go.Scatter(
-                    x=filtered_df["timestamp"], y=filtered_df["inverter_temperature_c"],
-                    mode="lines", name="Inverter Temp (°C)", line=dict(color="#E45756"),
+                    x=filtered_df["timestamp"],
+                    y=filtered_df["inverter_temperature_c"],
+                    mode="lines",
+                    name="Inverter Temp (°C)",
+                    line=dict(color="#E45756"),
                 )
             )
         if has_ambient:
             fig_temp.add_trace(
                 go.Scatter(
-                    x=filtered_df["timestamp"], y=filtered_df["ambient_temperature_c"],
-                    mode="lines", name="Ambient Temp (°C)", line=dict(color="#F58518"),
+                    x=filtered_df["timestamp"],
+                    y=filtered_df["ambient_temperature_c"],
+                    mode="lines",
+                    name="Ambient Temp (°C)",
+                    line=dict(color="#F58518"),
                 )
             )
         fig_temp.update_layout(
-            title="Inverter vs. Ambient Temperature", xaxis_title="Time",
-            yaxis_title="Temperature (°C)", hovermode="x unified",
-            height=380, template="plotly_white",
+            title="Inverter vs. Ambient Temperature",
+            xaxis_title="Time",
+            yaxis_title="Temperature (°C)",
+            hovermode="x unified",
+            height=380,
+            template="plotly_white",
         )
         st.plotly_chart(fig_temp, width="stretch")
     else:
@@ -630,22 +969,31 @@ with thermal_col2:
         fig_delta = go.Figure()
         fig_delta.add_trace(
             go.Scatter(
-                x=filtered_df["timestamp"], y=filtered_df["inverter_ambient_temp_delta"],
-                mode="lines", name="Temp Delta (°C)", line=dict(color="#B279A2"),
+                x=filtered_df["timestamp"],
+                y=filtered_df["inverter_ambient_temp_delta"],
+                mode="lines",
+                name="Temp Delta (°C)",
+                line=dict(color="#B279A2"),
             )
         )
         anomaly_points = filtered_df[filtered_df["anomaly_flag"]]
         if len(anomaly_points) > 0:
             fig_delta.add_trace(
                 go.Scatter(
-                    x=anomaly_points["timestamp"], y=anomaly_points["inverter_ambient_temp_delta"],
-                    mode="markers", name="Flagged anomaly", marker=dict(size=7, color="#E45756"),
+                    x=anomaly_points["timestamp"],
+                    y=anomaly_points["inverter_ambient_temp_delta"],
+                    mode="markers",
+                    name="Flagged anomaly",
+                    marker=dict(size=7, color="#E45756"),
                 )
             )
         fig_delta.update_layout(
-            title="Inverter-to-Ambient Temperature Difference", xaxis_title="Time",
-            yaxis_title="Temperature Difference (°C)", hovermode="x unified",
-            height=380, template="plotly_white",
+            title="Inverter-to-Ambient Temperature Difference",
+            xaxis_title="Time",
+            yaxis_title="Temperature Difference (°C)",
+            hovermode="x unified",
+            height=380,
+            template="plotly_white",
         )
         st.plotly_chart(fig_delta, width="stretch")
     else:
@@ -660,13 +1008,20 @@ st.divider()
 
 st.subheader("Detected Anomalies")
 
-anomaly_df = filtered_df[filtered_df["anomaly_flag"]].copy() if total_observations else filtered_df.copy()
+anomaly_df = (
+    filtered_df[filtered_df["anomaly_flag"]].copy() if total_observations else filtered_df.copy()
+)
 
 if len(anomaly_df) > 0:
     display_columns = [
-        "timestamp", "reconstruction_error", "anomaly_score_ratio",
-        "top_contributing_feature", "inverter_temperature_c",
-        "ac_power_kw", "dc_power_kw", "anomaly_reason",
+        "timestamp",
+        "reconstruction_error",
+        "anomaly_score_ratio",
+        "top_contributing_feature",
+        "inverter_temperature_c",
+        "ac_power_kw",
+        "dc_power_kw",
+        "anomaly_reason",
     ]
     display_columns = [c for c in display_columns if c in anomaly_df.columns]
     st.dataframe(
@@ -703,18 +1058,36 @@ if len(anomaly_df) > 0:
     with inv_cols[1]:
         st.metric("Reconstruction Error", fmt_num(selected_anomaly.get("reconstruction_error"), 4))
     with inv_cols[2]:
-        st.metric("Score / Threshold Ratio", fmt_num(selected_anomaly.get("anomaly_score_ratio"), 2, "×"))
+        st.metric(
+            "Score / Threshold Ratio", fmt_num(selected_anomaly.get("anomaly_score_ratio"), 2, "×")
+        )
     with inv_cols[3]:
-        st.metric("Inverter Temperature", fmt_num(selected_anomaly.get("inverter_temperature_c"), 1, " °C"))
+        st.metric(
+            "Inverter Temperature",
+            fmt_num(selected_anomaly.get("inverter_temperature_c"), 1, " °C"),
+        )
 
     with st.expander("Other available values at this observation"):
         other_cols = [
-            c for c in [
-                "ambient_temperature_c", "inverter_ambient_temp_delta", "temp_delta_zscore",
-                "dc_power_kw", "ac_power_kw", "dc_voltage_v", "dc_current_a",
-                "ac_voltage_v", "ac_current_a", "power_factor", "frequency_hz",
-                "efficiency_pct", "poa_w_m2", "ghi_w_m2", "quality_code_inv",
-                "communication_status_inv", "anomaly_reason",
+            c
+            for c in [
+                "ambient_temperature_c",
+                "inverter_ambient_temp_delta",
+                "temp_delta_zscore",
+                "dc_power_kw",
+                "ac_power_kw",
+                "dc_voltage_v",
+                "dc_current_a",
+                "ac_voltage_v",
+                "ac_current_a",
+                "power_factor",
+                "frequency_hz",
+                "efficiency_pct",
+                "poa_w_m2",
+                "ghi_w_m2",
+                "quality_code_inv",
+                "communication_status_inv",
+                "anomaly_reason",
             ]
             if c in selected_anomaly.index
         ]
@@ -739,30 +1112,46 @@ if len(anomaly_df) > 0:
         if "ac_power_kw" in trend_window.columns:
             fig_trend.add_trace(
                 go.Scatter(
-                    x=trend_window["timestamp"], y=trend_window["ac_power_kw"],
-                    mode="lines", name="AC Power (kW)", yaxis="y", line=dict(color="#4C78A8"),
+                    x=trend_window["timestamp"],
+                    y=trend_window["ac_power_kw"],
+                    mode="lines",
+                    name="AC Power (kW)",
+                    yaxis="y",
+                    line=dict(color="#4C78A8"),
                 )
             )
         if "dc_current_a" in trend_window.columns:
             fig_trend.add_trace(
                 go.Scatter(
-                    x=trend_window["timestamp"], y=trend_window["dc_current_a"],
-                    mode="lines", name="DC Current (A)", yaxis="y2", line=dict(color="#F58518"),
+                    x=trend_window["timestamp"],
+                    y=trend_window["dc_current_a"],
+                    mode="lines",
+                    name="DC Current (A)",
+                    yaxis="y2",
+                    line=dict(color="#F58518"),
                 )
             )
         if "inverter_temperature_c" in trend_window.columns:
             fig_trend.add_trace(
                 go.Scatter(
-                    x=trend_window["timestamp"], y=trend_window["inverter_temperature_c"],
-                    mode="lines", name="Inverter Temperature (°C)", yaxis="y3",
+                    x=trend_window["timestamp"],
+                    y=trend_window["inverter_temperature_c"],
+                    mode="lines",
+                    name="Inverter Temperature (°C)",
+                    yaxis="y3",
                     line=dict(color="#E45756"),
                 )
             )
 
         fig_trend.add_vline(x=end_time, line_dash="dash", line_width=2, line_color="#B10318")
         fig_trend.add_annotation(
-            x=end_time, y=1.06, xref="x", yref="paper", showarrow=False,
-            text="Selected anomaly", font=dict(color="#B10318", size=12),
+            x=end_time,
+            y=1.06,
+            xref="x",
+            yref="paper",
+            showarrow=False,
+            text="Selected anomaly",
+            font=dict(color="#B10318", size=12),
         )
 
         fig_trend.update_layout(
@@ -802,10 +1191,12 @@ if len(anomaly_df) > 0:
     if contribution_cols:
         contrib_values = selected_anomaly[contribution_cols].dropna()
         if len(contrib_values) > 0:
-            contrib_plot_df = pd.DataFrame({
-                "feature": [c.replace("_contribution_pct", "") for c in contrib_values.index],
-                "contribution_pct": contrib_values.values,
-            }).sort_values("contribution_pct", ascending=True)
+            contrib_plot_df = pd.DataFrame(
+                {
+                    "feature": [c.replace("_contribution_pct", "") for c in contrib_values.index],
+                    "contribution_pct": contrib_values.values,
+                }
+            ).sort_values("contribution_pct", ascending=True)
 
             fig_contrib = go.Figure()
             fig_contrib.add_trace(
