@@ -35,13 +35,16 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .block-container {padding-top: 2rem;}
+    .block-container {padding-top: 1.5rem; padding-bottom: 2rem;}
     [data-testid="stMetricValue"] {font-size: 1.4rem;}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+
+st.session_state.setdefault("last_ai_explanation", None)
+st.session_state.setdefault("last_ai_evidence", None)
 
 # ============================================================
 # DATA LOADING (cached -- parquet is read once per session)
@@ -808,29 +811,85 @@ if len(anomaly_df) > 0:
     # ========================================================
     st.markdown("#### AI Explanation")
     st.caption(
-        "The LLM receives only the evidence calculated above. It explains the anomaly "
-        "without treating feature contributions as proven causes."
+        "AI explanation based on the selected anomaly and the evidence "
+        "retrieved from the model output."
     )
 
-    if st.button(
-        "Generate AI Explanation",
-        type="primary",
-        help="Let the AI retrieve the evidence needed to explain the selected anomaly.",
-    ):
+    # Keep the explanation and Generate button aligned in one row.
+    ai_text_col, ai_button_col = st.columns([5, 1])
+
+    with ai_text_col:
+        st.markdown(
+            """
+            <div style="
+                background:#F7F9FC;
+                border:1px solid #D9E1EA;
+                border-radius:8px;
+                padding:14px 18px;
+                min-height:72px;
+                display:flex;
+                align-items:center;
+            ">
+                <span style="
+                    color:#64748B;
+                    font-size:0.92rem;
+                ">
+                    Generate an AI explanation to see why the anomaly was
+                    flagged, when it occurred, and what should be checked.
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with ai_button_col:
+        st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+
+        generate_ai = st.button(
+            "Generate",
+            type="primary",
+            use_container_width=True,
+            help="Generate a concise explanation from the selected anomaly evidence.",
+        )
+
+    if generate_ai:
         with st.spinner("Generating explanation..."):
             try:
                 ai_explanation, ai_evidence = generate_ai_explanation(selected_anomaly)
+
                 st.session_state["last_ai_explanation"] = ai_explanation
                 st.session_state["last_ai_evidence"] = ai_evidence
+
             except Exception as e:
                 st.error(f"AI explanation failed: {e}")
 
-    if "last_ai_evidence" in st.session_state:
-        with st.expander("Evidence retrieved by AI (JSON)"):
+    # --------------------------------------------------------
+    # Display the latest AI explanation
+    # --------------------------------------------------------
+    if st.session_state.get("last_ai_explanation"):
+
+        st.markdown(
+            """
+            <div style="
+                margin-top:12px;
+                border:1px solid #D9E1EA;
+                border-radius:8px;
+                background:#FFFFFF;
+                padding:16px 18px;
+            ">
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(st.session_state["last_ai_explanation"])
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Keep raw evidence available for debugging, but hidden by default.
+    if st.session_state.get("last_ai_evidence"):
+        with st.expander("View AI evidence"):
             st.json(st.session_state["last_ai_evidence"])
 
-    if "last_ai_explanation" in st.session_state:
-        st.markdown(st.session_state["last_ai_explanation"])
 
 else:
     st.info("No anomalies in the current selection to investigate.")
