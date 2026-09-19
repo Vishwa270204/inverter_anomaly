@@ -271,7 +271,7 @@ Give exactly these 4 short sections:
 Keep the total response under 80 words. Do not add extra sections, technical explanations, or ML terminology. If the evidence is insufficient, say so briefly rather than guessing.
 """
 messages = [{"role":"system","content":system_prompt},{"role":"user","content":json.dumps({"selected_timestamp":timestamp,"inverter_id":inverter_id,"selected_row":row_to_dict(selected_anomaly)},default=str)}]
-    for _ in range(6):
+for _ in range(6):
         response = client.chat.completions.create(model="openai/gpt-oss-120b",messages=messages,tools=AI_TOOLS,tool_choice="auto",temperature=0.2)
         msg = response.choices[0].message
         if not msg.tool_calls:
