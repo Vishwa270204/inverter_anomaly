@@ -31,7 +31,8 @@ st.set_page_config(
     layout="wide",
 )
 
-# Light, professional styling -- no dark/neon theme, no animation.
+# Professional, compact theme. Filters live in the sidebar and content is
+# split into tabs so the page fits the screen instead of scrolling forever.
 st.markdown(
     """
     <style>
@@ -42,102 +43,122 @@ st.markdown(
     }
 
     :root {
-        --accent: #0F3554;
-        --accent-light: #E8EFF6;
-        --border: #E2E8F0;
+        --primary: #0F3554;
+        --primary-light: #164A73;
+        --warn: #DC6803;
+        --danger: #E4463F;
+        --border: #E4E9F0;
         --muted: #64748B;
         --surface: #FFFFFF;
-        --bg: #F7F9FC;
+        --bg: #F5F7FA;
     }
 
     .stApp { background-color: var(--bg); }
 
     .block-container {
-        padding-top: 1.6rem;
-        padding-bottom: 3rem;
-        max-width: 1300px;
+        padding-top: 1.1rem;
+        padding-bottom: 2rem;
+        max-width: 1280px;
     }
 
-    /* Metric / KPI cards */
+    /* ---------- Sidebar ---------- */
+    [data-testid="stSidebar"] {
+        background-color: var(--surface);
+        border-right: 1px solid var(--border);
+    }
+    [data-testid="stSidebar"] .block-container {
+        padding-top: 1.4rem;
+    }
+
+    /* ---------- Metric / KPI cards ---------- */
     [data-testid="stMetric"] {
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 10px;
-        padding: 1rem 1.1rem;
+        padding: 0.9rem 1.1rem;
         box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
     [data-testid="stMetricValue"] {
-        font-size: 1.5rem;
+        font-size: 1.4rem;
         font-weight: 700;
         color: #0F172A;
     }
     [data-testid="stMetricLabel"] {
-        font-size: 0.82rem;
+        font-size: 0.78rem;
         font-weight: 600;
         color: var(--muted);
         text-transform: uppercase;
         letter-spacing: 0.03em;
     }
 
-    /* Section headers */
-    h3, .stSubheader, [data-testid="stMarkdownContainer"] h3 {
+    /* ---------- Headings ---------- */
+    h3, [data-testid="stMarkdownContainer"] h3 {
         color: #0F172A;
         font-weight: 700;
+        margin-top: 0 !important;
     }
     h4 {
         color: #1E293B;
         font-weight: 600;
+        margin-top: 0 !important;
     }
 
-    /* Dividers a bit lighter */
-    hr { border-color: var(--border) !important; }
+    hr { border-color: var(--border) !important; margin: 0.9rem 0 !important; }
 
-    /* Buttons */
+    /* ---------- Tabs ---------- */
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        gap: 4px;
+        border-bottom: 1px solid var(--border);
+    }
+    [data-testid="stTabs"] [data-baseweb="tab"] {
+        height: 42px;
+        font-weight: 600;
+        color: var(--muted);
+        background-color: transparent;
+    }
+    [data-testid="stTabs"] [aria-selected="true"] {
+        color: var(--primary) !important;
+        border-bottom: 2px solid var(--primary) !important;
+    }
+
+    /* ---------- Buttons ---------- */
     .stButton > button {
         border-radius: 8px;
         font-weight: 600;
         border: 1px solid var(--border);
     }
     .stButton > button[kind="primary"] {
-        background-color: var(--accent);
-        border-color: var(--accent);
+        background-color: var(--primary);
+        border-color: var(--primary);
     }
     .stButton > button[kind="primary"]:hover {
         background-color: #0B2740;
         border-color: #0B2740;
     }
 
-    /* Tabs / expanders */
-    .streamlit-expanderHeader {
-        font-weight: 600;
-        border-radius: 8px;
-    }
+    /* ---------- Expanders / bordered containers ---------- */
+    .streamlit-expanderHeader { font-weight: 600; border-radius: 8px; }
     [data-testid="stExpander"] {
         border: 1px solid var(--border);
         border-radius: 10px;
         background: var(--surface);
     }
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 10px !important;
+    }
 
-    /* Dataframes */
+    /* ---------- Dataframes ---------- */
     [data-testid="stDataFrame"] {
         border: 1px solid var(--border);
         border-radius: 10px;
         overflow: hidden;
     }
 
-    /* Selectbox / date input / checkbox labels */
+    /* ---------- Form labels ---------- */
     label, .stSelectbox label, .stDateInput label {
         font-weight: 600 !important;
-        font-size: 0.85rem !important;
+        font-size: 0.83rem !important;
         color: #334155 !important;
-    }
-
-    /* Card wrapper used for AI explanation panels */
-    .pro-card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
     </style>
     """,
@@ -667,35 +688,35 @@ def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
 
 
 # ============================================================
-# HEADER
+# HEADER (compact)
 # ============================================================
 
 st.markdown(
     """
     <div style="
         background: linear-gradient(135deg, #0F3554 0%, #164A73 100%);
-        padding: 1.8rem 2rem;
-        border-radius: 12px;
-        margin-bottom: 1.6rem;
-        box-shadow: 0 4px 14px rgba(15, 53, 84, 0.18);
+        padding: 1.1rem 1.5rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 14px rgba(15, 53, 84, 0.16);
         display: flex;
         align-items: center;
-        gap: 1rem;
+        gap: 0.9rem;
     ">
         <div style="
             background: rgba(255,255,255,0.12);
-            width: 52px; height: 52px;
-            border-radius: 10px;
+            width: 42px; height: 42px;
+            border-radius: 9px;
             display: flex; align-items: center; justify-content: center;
-            font-size: 1.6rem;
+            font-size: 1.3rem;
             flex-shrink: 0;
         ">⚡</div>
         <div>
-            <div style="color:#FFFFFF; font-size:1.65rem; font-weight:700; line-height:1.25;">
+            <div style="color:#FFFFFF; font-size:1.35rem; font-weight:700; line-height:1.2;">
                 Inverter Anomaly Detection
             </div>
-            <div style="color:#B9CFE2; font-size:0.92rem; margin-top:0.2rem;">
-                Autoencoder-based anomaly detection with EVT/POT reconstruction-error thresholding
+            <div style="color:#B9CFE2; font-size:0.85rem; margin-top:0.1rem;">
+                Spot unusual inverter behavior early and see plain-language explanations.
             </div>
         </div>
     </div>
@@ -705,22 +726,20 @@ st.markdown(
 
 
 # ============================================================
-# FILTERS (inline, no sidebar)
+# SIDEBAR FILTERS
 # ============================================================
 
 min_date = df["timestamp"].min().date()
 max_date = df["timestamp"].max().date()
-
 show_inverter_filter = "inverter_id" in df.columns and df["inverter_id"].nunique() > 1
 
-st.markdown(
-    '<div class="pro-card" style="padding: 1rem 1.3rem 0.4rem; margin-bottom: 0.6rem;">',
-    unsafe_allow_html=True,
-)
+with st.sidebar:
+    st.markdown(
+        "<div style='font-weight:700; font-size:1rem; color:#0F172A; "
+        "margin-bottom:0.6rem;'>Filters</div>",
+        unsafe_allow_html=True,
+    )
 
-filter_cols = st.columns([2, 1, 1] if show_inverter_filter else [2, 1])
-
-with filter_cols[0]:
     selected_dates = st.date_input(
         "Date range",
         value=(min_date, max_date),
@@ -728,20 +747,19 @@ with filter_cols[0]:
         max_value=max_date,
     )
 
-with filter_cols[1]:
-    st.write("")  # vertical alignment spacer
-    show_anomalies_only = st.checkbox("Show anomalies only", value=False)
-
-if show_inverter_filter:
-    with filter_cols[2]:
+    if show_inverter_filter:
         inverter_options = ["All"] + sorted(df["inverter_id"].dropna().unique().tolist())
         selected_inverter = st.selectbox("Inverter", inverter_options)
-else:
-    selected_inverter = "All"
+    else:
+        selected_inverter = "All"
 
-st.caption("Ratio shows how far a reading is above the normal range — higher means more unusual.")
-st.markdown("</div>", unsafe_allow_html=True)
-st.divider()
+    show_anomalies_only = st.checkbox("Show anomalies only", value=False)
+
+    st.divider()
+    st.caption(
+        "**Severity** shows how far a reading is above the normal range — "
+        "higher means more unusual."
+    )
 
 
 # ============================================================
@@ -765,14 +783,7 @@ if show_anomalies_only:
     filtered_df = filtered_df[filtered_df["anomaly_flag"]].copy()
 
 if filtered_df.empty:
-    st.warning(
-        "No observations match the current filters. Adjust the date range or filters in the sidebar."
-    )
-
-
-# ============================================================
-# KPI SECTION
-# ============================================================
+    st.warning("No observations match the current filters. Adjust the filters in the sidebar.")
 
 total_observations = len(filtered_df)
 total_anomalies = int(filtered_df["anomaly_flag"].sum()) if total_observations else 0
@@ -783,425 +794,363 @@ max_temperature = (
     else None
 )
 
-st.markdown(
-    "<div style='font-weight:700; font-size:0.95rem; color:#334155; "
-    "margin-bottom:0.5rem;'>Overview</div>",
-    unsafe_allow_html=True,
-)
-
-kpi_cols = st.columns(4)
-with kpi_cols[0]:
-    st.metric("Total Observations", f"{total_observations:,}")
-with kpi_cols[1]:
-    st.metric(
-        "Anomalous Observations",
-        f"{total_anomalies:,}",
-        delta=f"{anomaly_rate:.1f}% of total" if anomaly_rate is not None else None,
-        delta_color="inverse",
-    )
-with kpi_cols[2]:
-    st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
-with kpi_cols[3]:
-    if "inverter_temperature_c" in filtered_df.columns:
-        st.metric("Max Inverter Temperature", fmt_num(max_temperature, 1, " °C"))
-    else:
-        st.metric("Max Inverter Temperature", "—")
-
-st.divider()
-
-
-# ============================================================
-# ANOMALY TIMELINE
-# ============================================================
-
-st.subheader("Anomaly Score Over Time")
-st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
-
-if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=filtered_df["timestamp"],
-            y=filtered_df["reconstruction_error"],
-            mode="lines",
-            name="Anomaly Score",
-            line=dict(color="#4C78A8", width=1.5),
-        )
-    )
-
-    anomaly_points = filtered_df[filtered_df["anomaly_flag"]]
-    if len(anomaly_points) > 0:
-        fig.add_trace(
-            go.Scatter(
-                x=anomaly_points["timestamp"],
-                y=anomaly_points["reconstruction_error"],
-                mode="markers",
-                name="Flagged anomaly",
-                marker=dict(size=8, color="#E45756", symbol="circle"),
-            )
-        )
-
-    fig.update_layout(
-        xaxis_title="Time",
-        yaxis_title="Anomaly Score",
-        yaxis_type="log",
-        hovermode="x unified",
-        height=380,
-        template="plotly_white",
-        margin=dict(t=20),
-    )
-    st.plotly_chart(fig, width="stretch")
-else:
-    st.info("No anomaly score data available for the selected period.")
-
-st.divider()
-
-
-# ============================================================
-# POWER OUTPUT
-# ============================================================
-
-st.subheader("Power Output")
-st.caption("How much power the inverter produced over time.")
-
-has_dc = "dc_power_kw" in filtered_df.columns
-has_ac = "ac_power_kw" in filtered_df.columns
-
-if total_observations > 0 and (has_dc or has_ac):
-    fig_power = go.Figure()
-    if has_ac:
-        fig_power.add_trace(
-            go.Scatter(
-                x=filtered_df["timestamp"],
-                y=filtered_df["ac_power_kw"],
-                mode="lines",
-                name="AC Power (kW)",
-                line=dict(color="#4C78A8"),
-            )
-        )
-    if has_dc:
-        fig_power.add_trace(
-            go.Scatter(
-                x=filtered_df["timestamp"],
-                y=filtered_df["dc_power_kw"],
-                mode="lines",
-                name="DC Power (kW)",
-                line=dict(color="#72B7B2"),
-            )
-        )
-    fig_power.update_layout(
-        xaxis_title="Time",
-        yaxis_title="Power (kW)",
-        hovermode="x unified",
-        height=360,
-        template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-        margin=dict(t=40),
-    )
-    st.plotly_chart(fig_power, width="stretch")
-else:
-    st.info("Power data not available.")
-
-st.divider()
-
-
-# ============================================================
-# TEMPERATURE
-# ============================================================
-
-st.subheader("Temperature")
-st.caption("Inverter temperature compared to the surrounding air temperature.")
-
-has_temp = "inverter_temperature_c" in filtered_df.columns
-has_ambient = "ambient_temperature_c" in filtered_df.columns
-
-if total_observations > 0 and (has_temp or has_ambient):
-    fig_temp = go.Figure()
-    if has_temp:
-        fig_temp.add_trace(
-            go.Scatter(
-                x=filtered_df["timestamp"],
-                y=filtered_df["inverter_temperature_c"],
-                mode="lines",
-                name="Inverter Temp (°C)",
-                line=dict(color="#E45756"),
-            )
-        )
-    if has_ambient:
-        fig_temp.add_trace(
-            go.Scatter(
-                x=filtered_df["timestamp"],
-                y=filtered_df["ambient_temperature_c"],
-                mode="lines",
-                name="Ambient Temp (°C)",
-                line=dict(color="#F58518"),
-            )
-        )
-    fig_temp.update_layout(
-        xaxis_title="Time",
-        yaxis_title="Temperature (°C)",
-        hovermode="x unified",
-        height=360,
-        template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-        margin=dict(t=40),
-    )
-    st.plotly_chart(fig_temp, width="stretch")
-else:
-    st.info("Temperature data not available.")
-
-st.divider()
-
-
-# ============================================================
-# DETECTED ANOMALIES TABLE
-# ============================================================
-
-st.subheader("Detected Anomalies")
-
 anomaly_df = (
     filtered_df[filtered_df["anomaly_flag"]].copy() if total_observations else filtered_df.copy()
 )
 
-if len(anomaly_df) > 0:
-    display_columns = [
-        "timestamp",
-        "anomaly_score_ratio",
-        "top_contributing_feature",
-        "inverter_temperature_c",
-        "ac_power_kw",
-    ]
-    display_columns = [c for c in display_columns if c in anomaly_df.columns]
-    friendly_names = {
-        "timestamp": "Time",
-        "anomaly_score_ratio": "Severity",
-        "top_contributing_feature": "Likely Cause",
-        "inverter_temperature_c": "Inverter Temp (°C)",
-        "ac_power_kw": "AC Power (kW)",
-    }
-    table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
-    st.dataframe(table, width="stretch", hide_index=True)
-else:
-    st.success("No anomalies detected in the selected period.")
-
-st.divider()
-
 
 # ============================================================
-# ANOMALY INVESTIGATION
+# SECTIONS (tabs keep the page short and easy to scan)
 # ============================================================
 
-st.subheader("Anomaly Investigation")
+tab_overview, tab_trends, tab_anomalies, tab_investigate = st.tabs(
+    ["📊 Overview", "📈 Trends", "🚩 Anomalies", "🔍 Investigate"]
+)
 
-if len(anomaly_df) > 0:
-    anomaly_df = anomaly_df.sort_values("timestamp").reset_index(drop=True)
-
-    selected_index = st.selectbox(
-        "Select an anomaly observation",
-        range(len(anomaly_df)),
-        format_func=lambda x: fmt_time(anomaly_df.loc[x, "timestamp"]),
-    )
-    selected_anomaly = anomaly_df.loc[selected_index]
-
-    # --- Selected anomaly summary ---
-    inv_cols = st.columns(3)
-    with inv_cols[0]:
-        st.metric("Time", fmt_time(selected_anomaly.get("timestamp")))
-    with inv_cols[1]:
-        st.metric("Severity", fmt_num(selected_anomaly.get("anomaly_score_ratio"), 2, "×"))
-    with inv_cols[2]:
+# ------------------------------------------------------------
+# TAB: OVERVIEW
+# ------------------------------------------------------------
+with tab_overview:
+    kpi_cols = st.columns(4)
+    with kpi_cols[0]:
+        st.metric("Total Observations", f"{total_observations:,}")
+    with kpi_cols[1]:
         st.metric(
-            "Inverter Temperature",
-            fmt_num(selected_anomaly.get("inverter_temperature_c"), 1, " °C"),
+            "Anomalous Observations",
+            f"{total_anomalies:,}",
+            delta=f"{anomaly_rate:.1f}% of total" if anomaly_rate is not None else None,
+            delta_color="inverse",
         )
-
-    # ========================================================
-    # 24-HOUR PRE-ANOMALY TREND (from trend_data.parquet)
-    # ========================================================
-    st.markdown("#### What Happened Before This Anomaly")
-    st.caption("Power and temperature in the 24 hours leading up to the flagged moment.")
-
-    end_time = pd.to_datetime(selected_anomaly["timestamp"])
-    trend_window, window_start = get_trend_window(trend_df, end_time, hours_back=24)
-
-    if len(trend_window) > 0:
-        fig_trend = go.Figure()
-
-        if "ac_power_kw" in trend_window.columns:
-            fig_trend.add_trace(
-                go.Scatter(
-                    x=trend_window["timestamp"],
-                    y=trend_window["ac_power_kw"],
-                    mode="lines",
-                    name="AC Power (kW)",
-                    yaxis="y",
-                    line=dict(color="#4C78A8"),
-                )
-            )
-        if "inverter_temperature_c" in trend_window.columns:
-            fig_trend.add_trace(
-                go.Scatter(
-                    x=trend_window["timestamp"],
-                    y=trend_window["inverter_temperature_c"],
-                    mode="lines",
-                    name="Inverter Temperature (°C)",
-                    yaxis="y2",
-                    line=dict(color="#E45756"),
-                )
-            )
-
-        fig_trend.add_vline(x=end_time, line_dash="dash", line_width=2, line_color="#B10318")
-        fig_trend.add_annotation(
-            x=end_time,
-            y=1.06,
-            xref="x",
-            yref="paper",
-            showarrow=False,
-            text="Selected anomaly",
-            font=dict(color="#B10318", size=12),
-        )
-
-        fig_trend.update_layout(
-            xaxis=dict(title="Time"),
-            yaxis=dict(title="AC Power (kW)", side="left"),
-            yaxis2=dict(title="Temperature (°C)", overlaying="y", side="right"),
-            hovermode="x unified",
-            height=380,
-            template="plotly_white",
-            legend=dict(orientation="h", yanchor="bottom", y=1.1, xanchor="center", x=0.5),
-            margin=dict(l=60, r=60, t=60, b=50),
-        )
-        st.plotly_chart(fig_trend, width="stretch")
-    else:
-        st.info(
-            "No data is available in the 24 hours before this anomaly "
-            "(it may be at the very start of the recorded history)."
-        )
-
-    st.divider()
-
-    # ========================================================
-    # FEATURE CONTRIBUTIONS
-    # ========================================================
-    st.markdown("#### What Contributed Most")
-    st.caption("Which reading looked most unusual for this anomaly — not a confirmed cause.")
-
-    contribution_cols = get_contribution_cols(anomaly_df)
-    if contribution_cols:
-        contrib_values = selected_anomaly[contribution_cols].dropna()
-        if len(contrib_values) > 0:
-            contrib_plot_df = pd.DataFrame(
-                {
-                    "feature": [c.replace("_contribution_pct", "") for c in contrib_values.index],
-                    "contribution_pct": contrib_values.values,
-                }
-            ).sort_values("contribution_pct", ascending=True)
-            # Keep it focused: only show the top 5 contributors.
-            contrib_plot_df = contrib_plot_df.tail(5)
-
-            fig_contrib = go.Figure()
-            fig_contrib.add_trace(
-                go.Bar(
-                    x=contrib_plot_df["contribution_pct"],
-                    y=contrib_plot_df["feature"],
-                    orientation="h",
-                    marker_color="#4C78A8",
-                )
-            )
-            fig_contrib.update_layout(
-                xaxis_title="Contribution (%)",
-                yaxis_title="",
-                height=260,
-                template="plotly_white",
-                margin=dict(t=20),
-            )
-            st.plotly_chart(fig_contrib, width="stretch")
+    with kpi_cols[2]:
+        st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
+    with kpi_cols[3]:
+        if "inverter_temperature_c" in filtered_df.columns:
+            st.metric("Max Inverter Temperature", fmt_num(max_temperature, 1, " °C"))
         else:
-            st.info("No contribution data available for this observation.")
+            st.metric("Max Inverter Temperature", "—")
+
+    st.write("")
+    st.markdown("##### Anomaly Score Over Time")
+    st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
+
+    if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=filtered_df["timestamp"],
+                y=filtered_df["reconstruction_error"],
+                mode="lines",
+                name="Anomaly Score",
+                line=dict(color="#4C78A8", width=1.5),
+            )
+        )
+        anomaly_points = filtered_df[filtered_df["anomaly_flag"]]
+        if len(anomaly_points) > 0:
+            fig.add_trace(
+                go.Scatter(
+                    x=anomaly_points["timestamp"],
+                    y=anomaly_points["reconstruction_error"],
+                    mode="markers",
+                    name="Flagged anomaly",
+                    marker=dict(size=8, color="#E45756", symbol="circle"),
+                )
+            )
+        fig.update_layout(
+            xaxis_title="Time",
+            yaxis_title="Anomaly Score",
+            yaxis_type="log",
+            hovermode="x unified",
+            height=360,
+            template="plotly_white",
+            margin=dict(t=10, l=10, r=10),
+        )
+        st.plotly_chart(fig, width="stretch")
     else:
-        st.info("No contribution data available for this observation.")
+        st.info("No anomaly score data available for the selected period.")
 
-    st.divider()
+# ------------------------------------------------------------
+# TAB: TRENDS (power + temperature side by side)
+# ------------------------------------------------------------
+with tab_trends:
+    trend_col1, trend_col2 = st.columns(2)
 
-    # ========================================================
-    # AI EXPLANATION
-    # ========================================================
-    st.markdown("#### AI Explanation")
-    st.caption("A plain-language summary of what happened and what to check.")
+    with trend_col1:
+        st.markdown("##### Power Output")
+        st.caption("How much power the inverter produced.")
+        has_dc = "dc_power_kw" in filtered_df.columns
+        has_ac = "ac_power_kw" in filtered_df.columns
+        if total_observations > 0 and (has_dc or has_ac):
+            fig_power = go.Figure()
+            if has_ac:
+                fig_power.add_trace(
+                    go.Scatter(
+                        x=filtered_df["timestamp"],
+                        y=filtered_df["ac_power_kw"],
+                        mode="lines",
+                        name="AC Power (kW)",
+                        line=dict(color="#4C78A8"),
+                    )
+                )
+            if has_dc:
+                fig_power.add_trace(
+                    go.Scatter(
+                        x=filtered_df["timestamp"],
+                        y=filtered_df["dc_power_kw"],
+                        mode="lines",
+                        name="DC Power (kW)",
+                        line=dict(color="#72B7B2"),
+                    )
+                )
+            fig_power.update_layout(
+                xaxis_title="Time",
+                yaxis_title="Power (kW)",
+                hovermode="x unified",
+                height=340,
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                margin=dict(t=30, l=10, r=10),
+            )
+            st.plotly_chart(fig_power, width="stretch")
+        else:
+            st.info("Power data not available.")
 
-    # Keep the explanation and Generate button aligned in one row.
-    ai_text_col, ai_button_col = st.columns([5, 1])
+    with trend_col2:
+        st.markdown("##### Temperature")
+        st.caption("Inverter temperature vs. the surrounding air.")
+        has_temp = "inverter_temperature_c" in filtered_df.columns
+        has_ambient = "ambient_temperature_c" in filtered_df.columns
+        if total_observations > 0 and (has_temp or has_ambient):
+            fig_temp = go.Figure()
+            if has_temp:
+                fig_temp.add_trace(
+                    go.Scatter(
+                        x=filtered_df["timestamp"],
+                        y=filtered_df["inverter_temperature_c"],
+                        mode="lines",
+                        name="Inverter Temp (°C)",
+                        line=dict(color="#E45756"),
+                    )
+                )
+            if has_ambient:
+                fig_temp.add_trace(
+                    go.Scatter(
+                        x=filtered_df["timestamp"],
+                        y=filtered_df["ambient_temperature_c"],
+                        mode="lines",
+                        name="Ambient Temp (°C)",
+                        line=dict(color="#F58518"),
+                    )
+                )
+            fig_temp.update_layout(
+                xaxis_title="Time",
+                yaxis_title="Temperature (°C)",
+                hovermode="x unified",
+                height=340,
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                margin=dict(t=30, l=10, r=10),
+            )
+            st.plotly_chart(fig_temp, width="stretch")
+        else:
+            st.info("Temperature data not available.")
 
-    with ai_text_col:
-        st.markdown(
-            """
-            <div style="
-                background:#F7F9FC;
-                border:1px solid #D9E1EA;
-                border-radius:8px;
-                padding:14px 18px;
-                min-height:72px;
-                display:flex;
-                align-items:center;
-            ">
-                <span style="
-                    color:#64748B;
-                    font-size:0.92rem;
-                ">
-                    Generate an AI explanation to see why the anomaly was
-                    flagged, when it occurred, and what should be checked.
-                </span>
-            </div>
-            """,
-            unsafe_allow_html=True,
+# ------------------------------------------------------------
+# TAB: ANOMALIES (table)
+# ------------------------------------------------------------
+with tab_anomalies:
+    st.markdown("##### Detected Anomalies")
+
+    if len(anomaly_df) > 0:
+        display_columns = [
+            "timestamp",
+            "anomaly_score_ratio",
+            "top_contributing_feature",
+            "inverter_temperature_c",
+            "ac_power_kw",
+        ]
+        display_columns = [c for c in display_columns if c in anomaly_df.columns]
+        friendly_names = {
+            "timestamp": "Time",
+            "anomaly_score_ratio": "Severity",
+            "top_contributing_feature": "Likely Cause",
+            "inverter_temperature_c": "Inverter Temp (°C)",
+            "ac_power_kw": "AC Power (kW)",
+        }
+        table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
+        st.dataframe(table, width="stretch", hide_index=True)
+    else:
+        st.success("No anomalies detected in the selected period.")
+
+# ------------------------------------------------------------
+# TAB: INVESTIGATE (drill into one anomaly + AI explanation)
+# ------------------------------------------------------------
+with tab_investigate:
+    if len(anomaly_df) > 0:
+        anomaly_df = anomaly_df.sort_values("timestamp").reset_index(drop=True)
+
+        selected_index = st.selectbox(
+            "Select an anomaly to investigate",
+            range(len(anomaly_df)),
+            format_func=lambda x: fmt_time(anomaly_df.loc[x, "timestamp"]),
         )
+        selected_anomaly = anomaly_df.loc[selected_index]
 
-    with ai_button_col:
-        st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+        inv_cols = st.columns(3)
+        with inv_cols[0]:
+            st.metric("Time", fmt_time(selected_anomaly.get("timestamp")))
+        with inv_cols[1]:
+            st.metric("Severity", fmt_num(selected_anomaly.get("anomaly_score_ratio"), 2, "×"))
+        with inv_cols[2]:
+            st.metric(
+                "Inverter Temperature",
+                fmt_num(selected_anomaly.get("inverter_temperature_c"), 1, " °C"),
+            )
 
-        generate_ai = st.button(
-            "Generate",
-            type="primary",
-            use_container_width=True,
-            help="Generate a concise explanation from the selected anomaly evidence.",
-        )
+        detail_col1, detail_col2 = st.columns(2)
 
-    if generate_ai:
-        with st.spinner("Generating explanation..."):
-            try:
-                ai_explanation, ai_evidence = generate_ai_explanation(selected_anomaly)
+        # ---- Before-anomaly trend ----
+        with detail_col1:
+            st.markdown("##### What Happened Before")
+            st.caption("Power & temperature in the 24 hours leading up to it.")
 
-                st.session_state["last_ai_explanation"] = ai_explanation
-                st.session_state["last_ai_evidence"] = ai_evidence
+            end_time = pd.to_datetime(selected_anomaly["timestamp"])
+            trend_window, window_start = get_trend_window(trend_df, end_time, hours_back=24)
 
-            except Exception as e:
-                st.error(f"AI explanation failed: {e}")
+            if len(trend_window) > 0:
+                fig_trend = go.Figure()
+                if "ac_power_kw" in trend_window.columns:
+                    fig_trend.add_trace(
+                        go.Scatter(
+                            x=trend_window["timestamp"],
+                            y=trend_window["ac_power_kw"],
+                            mode="lines",
+                            name="AC Power (kW)",
+                            yaxis="y",
+                            line=dict(color="#4C78A8"),
+                        )
+                    )
+                if "inverter_temperature_c" in trend_window.columns:
+                    fig_trend.add_trace(
+                        go.Scatter(
+                            x=trend_window["timestamp"],
+                            y=trend_window["inverter_temperature_c"],
+                            mode="lines",
+                            name="Temp (°C)",
+                            yaxis="y2",
+                            line=dict(color="#E45756"),
+                        )
+                    )
+                fig_trend.add_vline(
+                    x=end_time, line_dash="dash", line_width=2, line_color="#B10318"
+                )
+                fig_trend.update_layout(
+                    xaxis=dict(title="Time"),
+                    yaxis=dict(title="AC Power (kW)", side="left"),
+                    yaxis2=dict(title="Temp (°C)", overlaying="y", side="right"),
+                    hovermode="x unified",
+                    height=320,
+                    template="plotly_white",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.12, xanchor="center", x=0.5),
+                    margin=dict(l=50, r=50, t=40, b=40),
+                )
+                st.plotly_chart(fig_trend, width="stretch")
+            else:
+                st.info("No data available in the 24 hours before this anomaly.")
 
-    # --------------------------------------------------------
-    # Display the latest AI explanation
-    # --------------------------------------------------------
-    if st.session_state.get("last_ai_explanation"):
+        # ---- Top contributors ----
+        with detail_col2:
+            st.markdown("##### What Contributed Most")
+            st.caption("Most unusual reading — not a confirmed cause.")
 
-        st.markdown(
-            """
-            <div style="
-                margin-top:12px;
-                border:1px solid #D9E1EA;
-                border-radius:8px;
-                background:#FFFFFF;
-                padding:16px 18px;
-            ">
-            """,
-            unsafe_allow_html=True,
-        )
+            contribution_cols = get_contribution_cols(anomaly_df)
+            if contribution_cols:
+                contrib_values = selected_anomaly[contribution_cols].dropna()
+                if len(contrib_values) > 0:
+                    contrib_plot_df = pd.DataFrame(
+                        {
+                            "feature": [
+                                c.replace("_contribution_pct", "") for c in contrib_values.index
+                            ],
+                            "contribution_pct": contrib_values.values,
+                        }
+                    ).sort_values("contribution_pct", ascending=True)
+                    contrib_plot_df = contrib_plot_df.tail(5)
 
-        st.markdown(st.session_state["last_ai_explanation"])
+                    fig_contrib = go.Figure()
+                    fig_contrib.add_trace(
+                        go.Bar(
+                            x=contrib_plot_df["contribution_pct"],
+                            y=contrib_plot_df["feature"],
+                            orientation="h",
+                            marker_color="#4C78A8",
+                        )
+                    )
+                    fig_contrib.update_layout(
+                        xaxis_title="Contribution (%)",
+                        yaxis_title="",
+                        height=320,
+                        template="plotly_white",
+                        margin=dict(t=10, l=10, r=10, b=40),
+                    )
+                    st.plotly_chart(fig_contrib, width="stretch")
+                else:
+                    st.info("No contribution data available for this observation.")
+            else:
+                st.info("No contribution data available for this observation.")
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.divider()
 
+        # ---- AI explanation ----
+        st.markdown("##### AI Explanation")
+        st.caption("A plain-language summary of what happened and what to check.")
 
-else:
-    st.info("No anomalies in the current selection to investigate.")
+        ai_text_col, ai_button_col = st.columns([5, 1])
+
+        with ai_text_col:
+            if not st.session_state.get("last_ai_explanation"):
+                st.markdown(
+                    """
+                    <div style="
+                        background:#F7F9FC;
+                        border:1px solid #D9E1EA;
+                        border-radius:8px;
+                        padding:14px 18px;
+                        min-height:56px;
+                        display:flex;
+                        align-items:center;
+                    ">
+                        <span style="color:#64748B; font-size:0.92rem;">
+                            Click Generate to see why this anomaly was flagged
+                            and what to check.
+                        </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        with ai_button_col:
+            generate_ai = st.button(
+                "Generate",
+                type="primary",
+                use_container_width=True,
+                help="Generate a concise explanation from the selected anomaly evidence.",
+            )
+
+        if generate_ai:
+            with st.spinner("Generating explanation..."):
+                try:
+                    ai_explanation, ai_evidence = generate_ai_explanation(selected_anomaly)
+                    st.session_state["last_ai_explanation"] = ai_explanation
+                    st.session_state["last_ai_evidence"] = ai_evidence
+                except Exception as e:
+                    st.error(f"AI explanation failed: {e}")
+
+        if st.session_state.get("last_ai_explanation"):
+            with st.container(border=True):
+                st.markdown(st.session_state["last_ai_explanation"])
+
+    else:
+        st.info("No anomalies in the current selection to investigate.")
 
 
 # ============================================================
