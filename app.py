@@ -61,15 +61,6 @@ st.markdown(
         max-width: 1280px;
     }
 
-    /* ---------- Sidebar ---------- */
-    [data-testid="stSidebar"] {
-        background-color: var(--surface);
-        border-right: 1px solid var(--border);
-    }
-    [data-testid="stSidebar"] .block-container {
-        padding-top: 1.4rem;
-    }
-
     /* ---------- Metric / KPI cards ---------- */
     [data-testid="stMetric"] {
         background: var(--surface);
@@ -726,40 +717,43 @@ st.markdown(
 
 
 # ============================================================
-# SIDEBAR FILTERS
+# FILTERS (inline row, real bordered container)
 # ============================================================
 
 min_date = df["timestamp"].min().date()
 max_date = df["timestamp"].max().date()
 show_inverter_filter = "inverter_id" in df.columns and df["inverter_id"].nunique() > 1
 
-with st.sidebar:
-    st.markdown(
-        "<div style='font-weight:700; font-size:1rem; color:#0F172A; "
-        "margin-bottom:0.6rem;'>Filters</div>",
-        unsafe_allow_html=True,
-    )
+with st.container(border=True):
+    filter_cols = st.columns([2, 1, 1, 2] if show_inverter_filter else [2, 1, 2])
 
-    selected_dates = st.date_input(
-        "Date range",
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date,
-    )
+    with filter_cols[0]:
+        selected_dates = st.date_input(
+            "Date range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+        )
+
+    with filter_cols[1]:
+        st.write("")  # align checkbox with the date input
+        show_anomalies_only = st.checkbox("Show anomalies only", value=False)
 
     if show_inverter_filter:
-        inverter_options = ["All"] + sorted(df["inverter_id"].dropna().unique().tolist())
-        selected_inverter = st.selectbox("Inverter", inverter_options)
+        with filter_cols[2]:
+            inverter_options = ["All"] + sorted(df["inverter_id"].dropna().unique().tolist())
+            selected_inverter = st.selectbox("Inverter", inverter_options)
+        caption_col = filter_cols[3]
     else:
         selected_inverter = "All"
+        caption_col = filter_cols[2]
 
-    show_anomalies_only = st.checkbox("Show anomalies only", value=False)
-
-    st.divider()
-    st.caption(
-        "**Severity** shows how far a reading is above the normal range — "
-        "higher means more unusual."
-    )
+    with caption_col:
+        st.write("")
+        st.caption(
+            "**Severity** shows how far a reading is above the normal range "
+            "— higher means more unusual."
+        )
 
 
 # ============================================================
@@ -783,7 +777,7 @@ if show_anomalies_only:
     filtered_df = filtered_df[filtered_df["anomaly_flag"]].copy()
 
 if filtered_df.empty:
-    st.warning("No observations match the current filters. Adjust the filters in the sidebar.")
+    st.warning("No observations match the current filters. Adjust the filters above.")
 
 total_observations = len(filtered_df)
 total_anomalies = int(filtered_df["anomaly_flag"].sum()) if total_observations else 0
