@@ -5,8 +5,7 @@ Production frontend only. All ML/training happens in inverter_anomaly.ipynb.
 
 Reads:
     dashboard_data.parquet  -> evaluation-period observations + model output
-                                (the only data source; also used for the
-                                24-hour pre-anomaly context)
+    trend_data.parquet      -> full historical time series (pre-anomaly context)
 
 Does NOT retrain or re-run the notebook. Does NOT treat anomaly_score_ratio
 as a probability. Feature contributions are reported as "contributed most
@@ -178,6 +177,14 @@ def load_dashboard_data(path="dashboard_data.parquet"):
     return df
 
 
+@st.cache_data
+def load_trend_data(path="trend_data.parquet"):
+    df = pd.read_parquet(path)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    return df
+
+
 def safe_load(loader, path, label):
     try:
         return loader(path)
@@ -197,6 +204,17 @@ df = safe_load(load_dashboard_data, "dashboard_data.parquet", "Dashboard data")
 if df.empty:
     st.error("`dashboard_data.parquet` loaded but contains no rows.")
     st.stop()
+
+# trend_data.parquet is optional: it adds pre-evaluation history for the
+# Trends tab and for the 24-hour "before an anomaly" context. If it hasn't
+# been generated yet (see notebook Section 19), fall back to using the
+# dashboard data alone instead of crashing the whole app.
+try:
+    trend_df = load_trend_data("trend_data.parquet")
+    has_trend_data = True
+except Exception:
+    trend_df = df
+    has_trend_data = False
 
 
 # ============================================================
@@ -218,7 +236,8 @@ def fmt_time(value, dash="—"):
 
 
 def get_trend_window(source, end_time, hours_back=24):
-    """Slice dashboard_data.parquet to [end_time - hours_back, end_time]."""
+    """Slice trend_data.parquet (or dashboard_data.parquet as fallback) to
+    [end_time - hours_back, end_time]."""
     end_time = pd.to_datetime(end_time)
     start_time = end_time - timedelta(hours=hours_back)
     window = source[(source["timestamp"] >= start_time) & (source["timestamp"] <= end_time)].copy()
@@ -278,7 +297,7 @@ def get_anomaly_details(timestamp, inverter_id=None):
 def get_pre_anomaly_trend(timestamp, inverter_id=None, hours=24):
     target = pd.to_datetime(timestamp)
     start = target - timedelta(hours=float(hours))
-    source = df[(df["timestamp"] >= start) & (df["timestamp"] <= target)].copy()
+    source = trend_df[(trend_df["timestamp"] >= start) & (trend_df["timestamp"] <= target)].copy()
     if inverter_id is not None and "inverter_id" in source.columns:
         source = source[source["inverter_id"].astype(str) == str(inverter_id)]
     if source.empty:
@@ -710,11 +729,24 @@ st.markdown(
 # FILTERS (inline row, real bordered container)
 # ============================================================
 
-min_date = df["timestamp"].min().date()
-max_date = df["timestamp"].max().date()
+# The date picker covers the FULL dataset (trend_data.parquet goes back
+# further than the scored evaluation period in dashboard_data.parquet), so
+# users can browse raw history even for dates that weren't scored for
+# anomalies. If trend_data.parquet isn't available yet, this just falls
+# back to the evaluation period's own range.
+eval_min_date = df["timestamp"].min().date()
+eval_max_date = df["timestamp"].max().date()
+min_date = min(eval_min_date, trend_df["timestamp"].min().date())
+max_date = max(eval_max_date, trend_df["timestamp"].max().date())
 show_inverter_filter = "inverter_id" in df.columns and df["inverter_id"].nunique() > 1
 
 with st.container(border=True):
+    if not has_trend_data:
+        st.caption(
+            "ℹ️ `trend_data.parquet` not found — showing the evaluation "
+            "period only. Run notebook Section 19 to enable full history."
+        )
+
     filter_cols = st.columns([1.2, 1.2, 1, 1, 2] if show_inverter_filter else [1.2, 1.2, 1, 2])
 
     with filter_cols[0]:
@@ -755,26 +787,45 @@ with st.container(border=True):
 
     if start_date > end_date:
         st.warning("Start date is after end date — swap them to see results.")
+    elif has_trend_data and (start_date < eval_min_date or end_date > eval_max_date):
+        st.caption(
+            f"ℹ️ Anomaly detection only covers **{eval_min_date} to {eval_max_date}**. "
+            "Dates outside that window show raw power & temperature readings "
+            "but no anomaly results."
+        )
 
 
 # ============================================================
 # FILTER DATA
 # ============================================================
 
+# filtered_df: the scored evaluation data (has anomaly results) -- powers
+# the KPIs, Overview chart, Anomalies table, and Investigate tab.
 if start_date <= end_date:
     filtered_df = df[
         (df["timestamp"].dt.date >= start_date) & (df["timestamp"].dt.date <= end_date)
     ].copy()
+    # filtered_trend_df: the full raw history -- powers the Trends tab so
+    # dates before the evaluation period still show something (falls back
+    # to filtered_df itself when trend_data.parquet isn't available).
+    filtered_trend_df = trend_df[
+        (trend_df["timestamp"].dt.date >= start_date) & (trend_df["timestamp"].dt.date <= end_date)
+    ].copy()
 else:
     filtered_df = df.iloc[0:0].copy()  # empty until the dates are fixed
+    filtered_trend_df = trend_df.iloc[0:0].copy()
 
 if selected_inverter != "All" and "inverter_id" in filtered_df.columns:
     filtered_df = filtered_df[filtered_df["inverter_id"] == selected_inverter].copy()
+if selected_inverter != "All" and "inverter_id" in filtered_trend_df.columns:
+    filtered_trend_df = filtered_trend_df[
+        filtered_trend_df["inverter_id"] == selected_inverter
+    ].copy()
 
 if show_anomalies_only:
     filtered_df = filtered_df[filtered_df["anomaly_flag"]].copy()
 
-if filtered_df.empty:
+if filtered_df.empty and filtered_trend_df.empty:
     st.warning("No observations match the current filters. Adjust the filters above.")
 
 total_observations = len(filtered_df)
@@ -867,20 +918,21 @@ with tab_overview:
 # TAB: TRENDS (power + temperature side by side)
 # ------------------------------------------------------------
 with tab_trends:
+    trend_total = len(filtered_trend_df)
     trend_col1, trend_col2 = st.columns(2)
 
     with trend_col1:
         st.markdown("##### Power Output")
         st.caption("How much power the inverter produced.")
-        has_dc = "dc_power_kw" in filtered_df.columns
-        has_ac = "ac_power_kw" in filtered_df.columns
-        if total_observations > 0 and (has_dc or has_ac):
+        has_dc = "dc_power_kw" in filtered_trend_df.columns
+        has_ac = "ac_power_kw" in filtered_trend_df.columns
+        if trend_total > 0 and (has_dc or has_ac):
             fig_power = go.Figure()
             if has_ac:
                 fig_power.add_trace(
                     go.Scatter(
-                        x=filtered_df["timestamp"],
-                        y=filtered_df["ac_power_kw"],
+                        x=filtered_trend_df["timestamp"],
+                        y=filtered_trend_df["ac_power_kw"],
                         mode="lines",
                         name="AC Power (kW)",
                         line=dict(color="#4C78A8"),
@@ -889,8 +941,8 @@ with tab_trends:
             if has_dc:
                 fig_power.add_trace(
                     go.Scatter(
-                        x=filtered_df["timestamp"],
-                        y=filtered_df["dc_power_kw"],
+                        x=filtered_trend_df["timestamp"],
+                        y=filtered_trend_df["dc_power_kw"],
                         mode="lines",
                         name="DC Power (kW)",
                         line=dict(color="#72B7B2"),
@@ -912,15 +964,15 @@ with tab_trends:
     with trend_col2:
         st.markdown("##### Temperature")
         st.caption("Inverter temperature vs. the surrounding air.")
-        has_temp = "inverter_temperature_c" in filtered_df.columns
-        has_ambient = "ambient_temperature_c" in filtered_df.columns
-        if total_observations > 0 and (has_temp or has_ambient):
+        has_temp = "inverter_temperature_c" in filtered_trend_df.columns
+        has_ambient = "ambient_temperature_c" in filtered_trend_df.columns
+        if trend_total > 0 and (has_temp or has_ambient):
             fig_temp = go.Figure()
             if has_temp:
                 fig_temp.add_trace(
                     go.Scatter(
-                        x=filtered_df["timestamp"],
-                        y=filtered_df["inverter_temperature_c"],
+                        x=filtered_trend_df["timestamp"],
+                        y=filtered_trend_df["inverter_temperature_c"],
                         mode="lines",
                         name="Inverter Temp (°C)",
                         line=dict(color="#E45756"),
@@ -929,8 +981,8 @@ with tab_trends:
             if has_ambient:
                 fig_temp.add_trace(
                     go.Scatter(
-                        x=filtered_df["timestamp"],
-                        y=filtered_df["ambient_temperature_c"],
+                        x=filtered_trend_df["timestamp"],
+                        y=filtered_trend_df["ambient_temperature_c"],
                         mode="lines",
                         name="Ambient Temp (°C)",
                         line=dict(color="#F58518"),
@@ -959,7 +1011,7 @@ with tab_anomalies:
         display_columns = [
             "timestamp",
             "anomaly_score_ratio",
-            "top_contributing_feature",
+            "anomaly_reason",
             "inverter_temperature_c",
             "ac_power_kw",
         ]
@@ -967,7 +1019,7 @@ with tab_anomalies:
         friendly_names = {
             "timestamp": "Time",
             "anomaly_score_ratio": "Severity",
-            "top_contributing_feature": "Likely Cause",
+            "anomaly_reason": "Likely Cause",
             "inverter_temperature_c": "Inverter Temp (°C)",
             "ac_power_kw": "AC Power (kW)",
         }
@@ -1015,7 +1067,7 @@ with tab_investigate:
             st.caption("Power & temperature in the 24 hours leading up to it.")
 
             end_time = pd.to_datetime(selected_anomaly["timestamp"])
-            trend_window, window_start = get_trend_window(df, end_time, hours_back=24)
+            trend_window, window_start = get_trend_window(trend_df, end_time, hours_back=24)
 
             if len(trend_window) > 1:
                 fig_trend = go.Figure()
