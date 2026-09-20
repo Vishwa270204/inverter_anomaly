@@ -112,14 +112,25 @@ st.markdown(
     }
 
     /* ---------- Headings ---------- */
+    h2, [data-testid="stMarkdownContainer"] h2 {
+        color: #0F172A;
+        font-size: 1.55rem !important;
+        font-weight: 700;
+        margin-top: 1.1rem !important;
+        margin-bottom: 0.35rem !important;
+        padding-bottom: 0.35rem;
+        border-bottom: 1px solid var(--border);
+    }
     h3, [data-testid="stMarkdownContainer"] h3 {
         color: #0F172A;
+        font-size: 1.22rem !important;
         font-weight: 700;
-        margin-top: 0 !important;
-        margin-bottom: 0.2rem !important;
+        margin-top: 0.7rem !important;
+        margin-bottom: 0.25rem !important;
     }
     h4 {
         color: #1E293B;
+        font-size: 1.05rem !important;
         font-weight: 600;
         margin-top: 0 !important;
         margin-bottom: 0.2rem !important;
@@ -130,27 +141,6 @@ st.markdown(
     /* ---------- Captions ---------- */
     [data-testid="stCaptionContainer"], .stCaption {
         margin-bottom: 0.2rem !important;
-    }
-
-    /* ---------- Tabs ---------- */
-    [data-testid="stTabs"] [data-baseweb="tab-list"] {
-        gap: 4px;
-        border-bottom: 1px solid var(--border);
-    }
-    [data-testid="stTabs"] [data-baseweb="tab"] {
-        height: 36px;
-        padding-top: 6px;
-        padding-bottom: 6px;
-        font-weight: 600;
-        color: var(--muted);
-        background-color: transparent;
-    }
-    [data-testid="stTabs"] [data-baseweb="tab-panel"] {
-        padding-top: 0.6rem;
-    }
-    [data-testid="stTabs"] [aria-selected="true"] {
-        color: var(--primary) !important;
-        border-bottom: 2px solid var(--primary) !important;
     }
 
     /* ---------- Buttons ---------- */
@@ -201,7 +191,7 @@ st.markdown(
     /* ---------- AI Explanation ---------- */
     .ai-title {
         color: #0F172A;
-        font-size: 1.18rem;
+        font-size: 1.5rem;
         font-weight: 700;
         line-height: 1.3;
         margin-top: 0.25rem;
@@ -210,7 +200,7 @@ st.markdown(
 
     .ai-subtitle {
         color: #64748B;
-        font-size: 0.92rem;
+        font-size: 1rem;
         line-height: 1.45;
         margin-bottom: 0.65rem;
     }
@@ -243,8 +233,8 @@ st.markdown(
 
     .ai-body {
         color: #1E293B;
-        font-size: 1rem;
-        line-height: 1.65;
+        font-size: 1.06rem;
+        line-height: 1.7;
         word-break: normal;
         overflow-wrap: anywhere;
     }
@@ -667,7 +657,8 @@ cause."
 
 OUTPUT FORMAT
 Return exactly these four sections, in this order, with these exact headings, and nothing \
-else:
+else. Do not use Markdown, bold markers, bullets before the headings, or code fences. \
+Write the headings as plain text exactly as shown below:
 
 What happened:
 <one or two concise sentences>
@@ -861,18 +852,28 @@ def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
 
 
 def render_ai_explanation(explanation):
-    """Render the four-section AI explanation as a readable full-width card."""
+    """Render the AI response as a clean, structured dashboard card.
+
+    The LLM may return headings as plain text or markdown-bold headings
+    (for example, **What happened:**). Normalize both forms so raw **
+    markers are never shown to the dashboard user.
+    """
     if not explanation:
         return
 
     text = str(explanation).strip()
+    # Normalize common markdown heading variants returned by the LLM.
+    text = re.sub(
+        r"(?im)^\s*\*{0,2}\s*(What happened|When|Why it was flagged|What to check)\s*:?\s*\*{0,2}\s*$",
+        lambda m: f"{m.group(1)}:",
+        text,
+    )
+
     pattern = re.compile(
         r"(?ms)^\s*(What happened|When|Why it was flagged|What to check):\s*(.*?)(?=^\s*(?:What happened|When|Why it was flagged|What to check):|\Z)"
     )
     sections = {m.group(1): m.group(2).strip() for m in pattern.finditer(text)}
 
-    # If the model response does not match the expected format, keep it readable
-    # rather than exposing raw/unstyled markdown.
     if len(sections) < 4:
         safe = html.escape(text).replace("\n", "<br>")
         st.markdown(
@@ -886,11 +887,13 @@ def render_ai_explanation(explanation):
 
     for title in order:
         body = sections.get(title, "")
+        # Remove accidental markdown bold markers inside section text too.
+        body = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", body).strip()
         parts.append('<div class="ai-row">')
         parts.append(f'<div class="ai-label">{html.escape(title)}</div>')
 
         if title == "What to check":
-            items = re.findall(r"(?m)^\s*\d+[.)]\s*(.+)$", body)
+            items = re.findall(r"(?m)^\s*(?:\d+[.)]|[-•])\s*(.+)$", body)
             if items:
                 parts.append('<ol class="ai-checks">')
                 for item in items:
@@ -911,16 +914,16 @@ def render_ai_explanation(explanation):
 
 
 # ============================================================
-# HEADER (compact)
+# HEADER
 # ============================================================
 
 st.markdown(
     """
     <div style="
         background: linear-gradient(135deg, #0F3554 0%, #164A73 100%);
-        padding: 0.6rem 1.1rem;
-        border-radius: 10px;
-        margin-bottom: 0.5rem;
+        padding: 1.25rem 1.6rem;
+        border-radius: 14px;
+        margin-bottom: 1.1rem;
         box-shadow: 0 4px 14px rgba(15, 53, 84, 0.16);
         display: flex;
         align-items: center;
@@ -928,17 +931,17 @@ st.markdown(
     ">
         <div style="
             background: rgba(255,255,255,0.12);
-            width: 34px; height: 34px;
-            border-radius: 8px;
+            width: 54px; height: 54px;
+            border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
-            font-size: 1.05rem;
+            font-size: 1.65rem;
             flex-shrink: 0;
         ">⚡</div>
         <div>
-            <div style="color:#FFFFFF; font-size:1.1rem; font-weight:700; line-height:1.2;">
+            <div style="color:#FFFFFF; font-size:1.8rem; font-weight:700; line-height:1.2;">
                 Inverter Anomaly Detection
             </div>
-            <div style="color:#B9CFE2; font-size:0.78rem; margin-top:0.05rem;">
+            <div style="color:#C9DDED; font-size:1rem; margin-top:0.22rem; line-height:1.4;">
                 Spot unusual inverter behavior early
             </div>
         </div>
@@ -1062,380 +1065,364 @@ anomaly_df = (
 
 
 # ============================================================
-# SECTIONS (tabs keep the page short and easy to scan)
+# DASHBOARD CONTENT -- single scrollable page
 # ============================================================
 
-tab_overview, tab_trends, tab_anomalies, tab_investigate = st.tabs(
-    ["📊 Overview", "📈 Trends", "🚩 Anomalies", "🔍 Investigate"]
-)
+# ------------------------------------------------------------
+# OVERVIEW
+# ------------------------------------------------------------
+st.markdown("## Overview")
+st.caption("A high-level view of inverter observations and detected anomalies for the selected period.")
 
-# ------------------------------------------------------------
-# TAB: OVERVIEW
-# ------------------------------------------------------------
-with tab_overview:
-    kpi_cols = st.columns(4)
-    with kpi_cols[0]:
-        st.metric("Total Observations", f"{total_observations:,}")
-    with kpi_cols[1]:
-        st.metric(
-            "Anomalous Observations",
-            f"{total_anomalies:,}",
-            delta=f"{anomaly_rate:.1f}% of total" if anomaly_rate is not None else None,
-            delta_color="inverse",
+kpi_cols = st.columns(4)
+with kpi_cols[0]:
+    st.metric("Total Observations", f"{total_observations:,}")
+with kpi_cols[1]:
+    st.metric(
+        "Anomalous Observations",
+        f"{total_anomalies:,}",
+        delta=f"{anomaly_rate:.1f}% of total" if anomaly_rate is not None else None,
+        delta_color="inverse",
+    )
+with kpi_cols[2]:
+    st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
+with kpi_cols[3]:
+    if "inverter_temperature_c" in filtered_df.columns:
+        st.metric("Max Inverter Temperature", fmt_num(max_temperature, 1, " °C"))
+    else:
+        st.metric("Max Inverter Temperature", "—")
+
+if total_observations > 0 and total_anomalies == 0:
+    st.caption("✅ No anomalies found in this period — everything looks normal.")
+
+st.markdown("### Anomaly Score Over Time")
+st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
+
+if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=filtered_df["timestamp"],
+            y=filtered_df["reconstruction_error"],
+            mode="lines",
+            name="Anomaly Score",
+            line=dict(color="#4C78A8", width=1.5),
         )
-    with kpi_cols[2]:
-        st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
-    with kpi_cols[3]:
-        if "inverter_temperature_c" in filtered_df.columns:
-            st.metric("Max Inverter Temperature", fmt_num(max_temperature, 1, " °C"))
-        else:
-            st.metric("Max Inverter Temperature", "—")
-
-    if total_observations > 0 and total_anomalies == 0:
-        st.caption("✅ No anomalies found in this period — everything looks normal.")
-
-    st.markdown("##### Anomaly Score Over Time")
-    st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
-
-    if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
-        fig = go.Figure()
+    )
+    anomaly_points = filtered_df[filtered_df["anomaly_flag"]]
+    if len(anomaly_points) > 0:
         fig.add_trace(
             go.Scatter(
-                x=filtered_df["timestamp"],
-                y=filtered_df["reconstruction_error"],
-                mode="lines",
-                name="Anomaly Score",
-                line=dict(color="#4C78A8", width=1.5),
+                x=anomaly_points["timestamp"],
+                y=anomaly_points["reconstruction_error"],
+                mode="markers",
+                name="Flagged anomaly",
+                marker=dict(size=8, color="#E45756", symbol="circle"),
             )
         )
-        anomaly_points = filtered_df[filtered_df["anomaly_flag"]]
-        if len(anomaly_points) > 0:
-            fig.add_trace(
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title="Anomaly Score",
+        yaxis_type="log",
+        hovermode="x unified",
+        height=380,
+        template="plotly_white",
+        margin=dict(t=20, l=55, r=25, b=45),
+    )
+    st.plotly_chart(fig, width="stretch")
+else:
+    st.info("No anomaly score data available for the selected period.")
+
+# ------------------------------------------------------------
+# TRENDS
+# ------------------------------------------------------------
+st.markdown("## Trends")
+st.caption("Historical power and temperature behavior for the selected period.")
+
+trend_total = len(filtered_trend_df)
+trend_col1, trend_col2 = st.columns(2)
+
+with trend_col1:
+    st.markdown("### Power Output")
+    st.caption("How much power the inverter produced.")
+    has_dc = "dc_power_kw" in filtered_trend_df.columns
+    has_ac = "ac_power_kw" in filtered_trend_df.columns
+    if trend_total > 0 and (has_dc or has_ac):
+        fig_power = go.Figure()
+        if has_ac:
+            fig_power.add_trace(
                 go.Scatter(
-                    x=anomaly_points["timestamp"],
-                    y=anomaly_points["reconstruction_error"],
-                    mode="markers",
-                    name="Flagged anomaly",
-                    marker=dict(size=8, color="#E45756", symbol="circle"),
+                    x=filtered_trend_df["timestamp"],
+                    y=filtered_trend_df["ac_power_kw"],
+                    mode="lines",
+                    name="AC Power (kW)",
+                    line=dict(color="#4C78A8"),
                 )
             )
-        fig.update_layout(
+        if has_dc:
+            fig_power.add_trace(
+                go.Scatter(
+                    x=filtered_trend_df["timestamp"],
+                    y=filtered_trend_df["dc_power_kw"],
+                    mode="lines",
+                    name="DC Power (kW)",
+                    line=dict(color="#72B7B2"),
+                )
+            )
+        fig_power.update_layout(
             xaxis_title="Time",
-            yaxis_title="Anomaly Score",
-            yaxis_type="log",
+            yaxis_title="Power (kW)",
             hovermode="x unified",
-            height=250,
+            height=340,
             template="plotly_white",
-            margin=dict(t=10, l=10, r=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+            margin=dict(t=35, l=55, r=20, b=45),
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig_power, width="stretch")
     else:
-        st.info("No anomaly score data available for the selected period.")
+        st.info("Power data not available.")
 
-# ------------------------------------------------------------
-# TAB: TRENDS (power + temperature side by side)
-# ------------------------------------------------------------
-with tab_trends:
-    trend_total = len(filtered_trend_df)
-    trend_col1, trend_col2 = st.columns(2)
-
-    with trend_col1:
-        st.markdown("##### Power Output")
-        st.caption("How much power the inverter produced.")
-        has_dc = "dc_power_kw" in filtered_trend_df.columns
-        has_ac = "ac_power_kw" in filtered_trend_df.columns
-        if trend_total > 0 and (has_dc or has_ac):
-            fig_power = go.Figure()
-            if has_ac:
-                fig_power.add_trace(
-                    go.Scatter(
-                        x=filtered_trend_df["timestamp"],
-                        y=filtered_trend_df["ac_power_kw"],
-                        mode="lines",
-                        name="AC Power (kW)",
-                        line=dict(color="#4C78A8"),
-                    )
+with trend_col2:
+    st.markdown("### Temperature")
+    st.caption("Inverter temperature vs. the surrounding air.")
+    has_temp = "inverter_temperature_c" in filtered_trend_df.columns
+    has_ambient = "ambient_temperature_c" in filtered_trend_df.columns
+    if trend_total > 0 and (has_temp or has_ambient):
+        fig_temp = go.Figure()
+        if has_temp:
+            fig_temp.add_trace(
+                go.Scatter(
+                    x=filtered_trend_df["timestamp"],
+                    y=filtered_trend_df["inverter_temperature_c"],
+                    mode="lines",
+                    name="Inverter Temp (°C)",
+                    line=dict(color="#E45756"),
                 )
-            if has_dc:
-                fig_power.add_trace(
-                    go.Scatter(
-                        x=filtered_trend_df["timestamp"],
-                        y=filtered_trend_df["dc_power_kw"],
-                        mode="lines",
-                        name="DC Power (kW)",
-                        line=dict(color="#72B7B2"),
-                    )
-                )
-            fig_power.update_layout(
-                xaxis_title="Time",
-                yaxis_title="Power (kW)",
-                hovermode="x unified",
-                height=230,
-                template="plotly_white",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-                margin=dict(t=30, l=10, r=10),
             )
-            st.plotly_chart(fig_power, width="stretch")
-        else:
-            st.info("Power data not available.")
-
-    with trend_col2:
-        st.markdown("##### Temperature")
-        st.caption("Inverter temperature vs. the surrounding air.")
-        has_temp = "inverter_temperature_c" in filtered_trend_df.columns
-        has_ambient = "ambient_temperature_c" in filtered_trend_df.columns
-        if trend_total > 0 and (has_temp or has_ambient):
-            fig_temp = go.Figure()
-            if has_temp:
-                fig_temp.add_trace(
-                    go.Scatter(
-                        x=filtered_trend_df["timestamp"],
-                        y=filtered_trend_df["inverter_temperature_c"],
-                        mode="lines",
-                        name="Inverter Temp (°C)",
-                        line=dict(color="#E45756"),
-                    )
+        if has_ambient:
+            fig_temp.add_trace(
+                go.Scatter(
+                    x=filtered_trend_df["timestamp"],
+                    y=filtered_trend_df["ambient_temperature_c"],
+                    mode="lines",
+                    name="Ambient Temp (°C)",
+                    line=dict(color="#F58518"),
                 )
-            if has_ambient:
-                fig_temp.add_trace(
-                    go.Scatter(
-                        x=filtered_trend_df["timestamp"],
-                        y=filtered_trend_df["ambient_temperature_c"],
-                        mode="lines",
-                        name="Ambient Temp (°C)",
-                        line=dict(color="#F58518"),
-                    )
-                )
-            fig_temp.update_layout(
-                xaxis_title="Time",
-                yaxis_title="Temperature (°C)",
-                hovermode="x unified",
-                height=230,
-                template="plotly_white",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-                margin=dict(t=30, l=10, r=10),
             )
-            st.plotly_chart(fig_temp, width="stretch")
-        else:
-            st.info("Temperature data not available.")
+        fig_temp.update_layout(
+            xaxis_title="Time",
+            yaxis_title="Temperature (°C)",
+            hovermode="x unified",
+            height=340,
+            template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+            margin=dict(t=35, l=55, r=20, b=45),
+        )
+        st.plotly_chart(fig_temp, width="stretch")
+    else:
+        st.info("Temperature data not available.")
 
 # ------------------------------------------------------------
-# TAB: ANOMALIES (table)
+# DETECTED ANOMALIES
 # ------------------------------------------------------------
-with tab_anomalies:
-    st.markdown("##### Detected Anomalies")
+st.markdown("## Detected Anomalies")
+st.caption("Observations flagged by the anomaly detector in the selected period.")
 
-    if len(anomaly_df) > 0:
-        display_columns = [
-            "timestamp",
-            "anomaly_score_ratio",
-            "anomaly_reason",
-            "inverter_temperature_c",
-            "ac_power_kw",
-        ]
-        display_columns = [c for c in display_columns if c in anomaly_df.columns]
-        friendly_names = {
-            "timestamp": "Time",
-            "anomaly_score_ratio": "Severity",
-            "anomaly_reason": "Likely Cause",
-            "inverter_temperature_c": "Inverter Temp (°C)",
-            "ac_power_kw": "AC Power (kW)",
-        }
-        table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
-        st.dataframe(table, width="stretch", hide_index=True)
-    elif total_observations > 0:
+if len(anomaly_df) > 0:
+    display_columns = [
+        "timestamp",
+        "anomaly_score_ratio",
+        "anomaly_reason",
+        "inverter_temperature_c",
+        "ac_power_kw",
+    ]
+    display_columns = [c for c in display_columns if c in anomaly_df.columns]
+    friendly_names = {
+        "timestamp": "Time",
+        "anomaly_score_ratio": "Severity",
+        "anomaly_reason": "Anomaly Description",
+        "inverter_temperature_c": "Inverter Temp (°C)",
+        "ac_power_kw": "AC Power (kW)",
+    }
+    table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
+    st.dataframe(table, width="stretch", hide_index=True)
+else:
+    if total_observations > 0:
         st.success(
             "✅ No anomalies in this period — the inverter behaved normally "
-            f"across all {total_observations:,} readings. Try a wider date "
-            "range to see historical anomalies."
+            f"across all {total_observations:,} readings."
         )
     else:
         st.info("No readings in this date range. Try a different range above.")
 
 # ------------------------------------------------------------
-# TAB: INVESTIGATE (drill into one anomaly + AI explanation)
+# INVESTIGATE AN ANOMALY
 # ------------------------------------------------------------
-with tab_investigate:
-    if len(anomaly_df) > 0:
-        anomaly_df = anomaly_df.sort_values("timestamp").reset_index(drop=True)
+st.markdown("## Investigate an Anomaly")
+st.caption("Select one detected anomaly to inspect its preceding trend, contributing parameters, and AI explanation.")
 
-        selected_index = st.selectbox(
-            "Select an anomaly to investigate",
-            range(len(anomaly_df)),
-            format_func=lambda x: fmt_time(anomaly_df.loc[x, "timestamp"]),
+if len(anomaly_df) > 0:
+    anomaly_df = anomaly_df.sort_values("timestamp").reset_index(drop=True)
+
+    selected_index = st.selectbox(
+        "Select an anomaly",
+        range(len(anomaly_df)),
+        format_func=lambda x: fmt_time(anomaly_df.loc[x, "timestamp"]),
+    )
+    selected_anomaly = anomaly_df.loc[selected_index]
+
+    inv_cols = st.columns(3)
+    with inv_cols[0]:
+        st.metric("Time", fmt_time(selected_anomaly.get("timestamp")))
+    with inv_cols[1]:
+        st.metric("Severity", fmt_num(selected_anomaly.get("anomaly_score_ratio"), 2, "×"))
+    with inv_cols[2]:
+        st.metric(
+            "Inverter Temperature",
+            fmt_num(selected_anomaly.get("inverter_temperature_c"), 1, " °C"),
         )
-        selected_anomaly = anomaly_df.loc[selected_index]
 
-        inv_cols = st.columns(3)
-        with inv_cols[0]:
-            st.metric("Time", fmt_time(selected_anomaly.get("timestamp")))
-        with inv_cols[1]:
-            st.metric("Severity", fmt_num(selected_anomaly.get("anomaly_score_ratio"), 2, "×"))
-        with inv_cols[2]:
-            st.metric(
-                "Inverter Temperature",
-                fmt_num(selected_anomaly.get("inverter_temperature_c"), 1, " °C"),
+    detail_col1, detail_col2 = st.columns(2)
+
+    with detail_col1:
+        st.markdown("### What Happened Before")
+        st.caption("Power and temperature in the 24 hours leading up to the anomaly.")
+
+        end_time = pd.to_datetime(selected_anomaly["timestamp"])
+        trend_window, window_start = get_trend_window(trend_df, end_time, hours_back=24)
+
+        if len(trend_window) > 1:
+            fig_trend = go.Figure()
+            if "ac_power_kw" in trend_window.columns:
+                fig_trend.add_trace(
+                    go.Scatter(
+                        x=trend_window["timestamp"],
+                        y=trend_window["ac_power_kw"],
+                        mode="lines",
+                        name="AC Power (kW)",
+                        yaxis="y",
+                        line=dict(color="#4C78A8"),
+                    )
+                )
+            if "inverter_temperature_c" in trend_window.columns:
+                fig_trend.add_trace(
+                    go.Scatter(
+                        x=trend_window["timestamp"],
+                        y=trend_window["inverter_temperature_c"],
+                        mode="lines",
+                        name="Temp (°C)",
+                        yaxis="y2",
+                        line=dict(color="#E45756"),
+                    )
+                )
+            fig_trend.add_vline(
+                x=end_time, line_dash="dash", line_width=2, line_color="#B10318"
+            )
+            fig_trend.update_layout(
+                xaxis=dict(title="Time"),
+                yaxis=dict(title="AC Power (kW)", side="left"),
+                yaxis2=dict(title="Temp (°C)", overlaying="y", side="right"),
+                hovermode="x unified",
+                height=360,
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.12, xanchor="center", x=0.5),
+                margin=dict(l=55, r=55, t=45, b=45),
+            )
+            st.plotly_chart(fig_trend, width="stretch")
+        else:
+            st.info(
+                "Not enough history before this anomaly to draw a trend — "
+                "it is at or very near the start of the available data."
             )
 
-        detail_col1, detail_col2 = st.columns(2)
+    with detail_col2:
+        st.markdown("### What Contributed Most")
+        st.caption("Parameters that contributed most to the unusual pattern — not confirmed causes.")
 
-        # ---- Before-anomaly trend ----
-        with detail_col1:
-            st.markdown("##### What Happened Before")
-            st.caption("Power & temperature in the 24 hours leading up to it.")
+        contribution_cols = get_contribution_cols(anomaly_df)
+        if contribution_cols:
+            contrib_values = selected_anomaly[contribution_cols].dropna()
+            if len(contrib_values) > 0:
+                contrib_plot_df = pd.DataFrame(
+                    {
+                        "feature": [c.replace("_contribution_pct", "") for c in contrib_values.index],
+                        "contribution_pct": contrib_values.values,
+                    }
+                ).sort_values("contribution_pct", ascending=True).tail(5)
 
-            end_time = pd.to_datetime(selected_anomaly["timestamp"])
-            trend_window, window_start = get_trend_window(trend_df, end_time, hours_back=24)
-
-            if len(trend_window) > 1:
-                fig_trend = go.Figure()
-                if "ac_power_kw" in trend_window.columns:
-                    fig_trend.add_trace(
-                        go.Scatter(
-                            x=trend_window["timestamp"],
-                            y=trend_window["ac_power_kw"],
-                            mode="lines",
-                            name="AC Power (kW)",
-                            yaxis="y",
-                            line=dict(color="#4C78A8"),
-                        )
+                fig_contrib = go.Figure()
+                fig_contrib.add_trace(
+                    go.Bar(
+                        x=contrib_plot_df["contribution_pct"],
+                        y=contrib_plot_df["feature"],
+                        orientation="h",
+                        marker_color="#4C78A8",
                     )
-                if "inverter_temperature_c" in trend_window.columns:
-                    fig_trend.add_trace(
-                        go.Scatter(
-                            x=trend_window["timestamp"],
-                            y=trend_window["inverter_temperature_c"],
-                            mode="lines",
-                            name="Temp (°C)",
-                            yaxis="y2",
-                            line=dict(color="#E45756"),
-                        )
-                    )
-                fig_trend.add_vline(
-                    x=end_time, line_dash="dash", line_width=2, line_color="#B10318"
                 )
-                fig_trend.update_layout(
-                    xaxis=dict(title="Time"),
-                    yaxis=dict(title="AC Power (kW)", side="left"),
-                    yaxis2=dict(title="Temp (°C)", overlaying="y", side="right"),
-                    hovermode="x unified",
-                    height=220,
+                fig_contrib.update_layout(
+                    xaxis_title="Contribution (%)",
+                    yaxis_title="",
+                    height=360,
                     template="plotly_white",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.12, xanchor="center", x=0.5),
-                    margin=dict(l=50, r=50, t=40, b=40),
+                    margin=dict(t=15, l=10, r=10, b=45),
                 )
-                st.plotly_chart(fig_trend, width="stretch")
-            else:
-                st.info(
-                    "Not enough history before this anomaly to draw a trend "
-                    "— it's at (or very near) the start of the available data."
-                )
-
-        # ---- Top contributors ----
-        with detail_col2:
-            st.markdown("##### What Contributed Most")
-            st.caption("Most unusual reading — not a confirmed cause.")
-
-            contribution_cols = get_contribution_cols(anomaly_df)
-            if contribution_cols:
-                contrib_values = selected_anomaly[contribution_cols].dropna()
-                if len(contrib_values) > 0:
-                    contrib_plot_df = pd.DataFrame(
-                        {
-                            "feature": [
-                                c.replace("_contribution_pct", "") for c in contrib_values.index
-                            ],
-                            "contribution_pct": contrib_values.values,
-                        }
-                    ).sort_values("contribution_pct", ascending=True)
-                    contrib_plot_df = contrib_plot_df.tail(5)
-
-                    fig_contrib = go.Figure()
-                    fig_contrib.add_trace(
-                        go.Bar(
-                            x=contrib_plot_df["contribution_pct"],
-                            y=contrib_plot_df["feature"],
-                            orientation="h",
-                            marker_color="#4C78A8",
-                        )
-                    )
-                    fig_contrib.update_layout(
-                        xaxis_title="Contribution (%)",
-                        yaxis_title="",
-                        height=220,
-                        template="plotly_white",
-                        margin=dict(t=10, l=10, r=10, b=40),
-                    )
-                    st.plotly_chart(fig_contrib, width="stretch")
-                else:
-                    st.info("No contribution data available for this observation.")
+                st.plotly_chart(fig_contrib, width="stretch")
             else:
                 st.info("No contribution data available for this observation.")
+        else:
+            st.info("No contribution data available for this observation.")
 
-        st.divider()
+    st.divider()
 
-        # ---- AI explanation ----
-        st.markdown('<div class="ai-title">AI Explanation</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="ai-subtitle">A plain-language summary of what happened and what to check.</div>',
-            unsafe_allow_html=True,
+    # --------------------------------------------------------
+    # AI EXPLANATION
+    # --------------------------------------------------------
+    st.markdown('<div class="ai-title">AI Explanation</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="ai-subtitle">A plain-language summary of what happened, when it happened, why it was flagged, and what to check.</div>',
+        unsafe_allow_html=True,
+    )
+
+    ts_key = clean_value(selected_anomaly.get("timestamp"))
+    inv_key = (
+        clean_value(selected_anomaly.get("inverter_id"))
+        if "inverter_id" in selected_anomaly.index
+        else None
+    )
+    anomaly_key = f"{ts_key}|{inv_key}"
+    cached = st.session_state["ai_explanations"].get(anomaly_key)
+
+    ai_button_col = st.columns([5, 1])[1]
+    with ai_button_col:
+        regenerate = st.button(
+            "Regenerate",
+            type="primary",
+            use_container_width=True,
+            help="Ask the AI to re-explain this anomaly from its evidence.",
         )
 
-        # Cache the explanation per anomaly (timestamp + inverter_id) so
-        # switching anomalies always regenerates -- it never shows a stale
-        # explanation left over from a previously selected anomaly.
-        ts_key = clean_value(selected_anomaly.get("timestamp"))
-        inv_key = (
-            clean_value(selected_anomaly.get("inverter_id"))
-            if "inverter_id" in selected_anomaly.index
-            else None
-        )
-        anomaly_key = f"{ts_key}|{inv_key}"
-        cached = st.session_state["ai_explanations"].get(anomaly_key)
+    # Auto-generate the first time this anomaly is viewed. No prompt is ever
+    # typed by the user. The button only forces a fresh explanation.
+    if regenerate or cached is None:
+        with st.spinner("Generating explanation from the anomaly evidence..."):
+            try:
+                ai_explanation, ai_evidence = generate_ai_explanation(selected_anomaly)
+                cached = {"explanation": ai_explanation, "evidence": ai_evidence, "error": None}
+            except Exception as e:
+                cached = {"explanation": None, "evidence": None, "error": str(e)}
+            st.session_state["ai_explanations"][anomaly_key] = cached
 
-        ai_text_col, ai_button_col = st.columns([5.5, 1.2])
+    if cached.get("error"):
+        st.error(f"AI explanation failed: {cached['error']}")
+    elif cached.get("explanation"):
+        render_ai_explanation(cached["explanation"])
 
-        with ai_text_col:
-            if cached is None:
-                st.markdown(
-                    """
-                    <div class="ai-generating">
-                        <span>Generating an explanation for this anomaly automatically...</span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-        with ai_button_col:
-            regenerate = st.button(
-                "Regenerate",
-                type="primary",
-                use_container_width=True,
-                help="Ask the AI to re-explain this anomaly from its evidence.",
-            )
-
-        # Auto-generate the first time this anomaly is viewed. No prompt is
-        # ever typed by the user -- the button only forces a fresh call.
-        if regenerate or cached is None:
-            with st.spinner("Generating explanation..."):
-                try:
-                    ai_explanation, ai_evidence = generate_ai_explanation(selected_anomaly)
-                    cached = {"explanation": ai_explanation, "evidence": ai_evidence, "error": None}
-                except Exception as e:
-                    cached = {"explanation": None, "evidence": None, "error": str(e)}
-                st.session_state["ai_explanations"][anomaly_key] = cached
-
-        if cached.get("error"):
-            st.error(f"AI explanation failed: {cached['error']}")
-        elif cached.get("explanation"):
-            render_ai_explanation(cached["explanation"])
-
-    else:
-        st.info(
-            "Nothing to investigate here — there are no anomalies in the "
-            "selected date range. Widen the date range or clear "
-            "**Show anomalies only** to bring up more data."
-        )
+else:
+    st.info(
+        "Nothing to investigate here — there are no anomalies in the selected "
+        "date range. Widen the date range or clear **Show anomalies only** "
+        "to bring up more data."
+    )
 
 
 # ============================================================
