@@ -959,7 +959,7 @@ with tab_anomalies:
         display_columns = [
             "timestamp",
             "anomaly_score_ratio",
-            "top_contributing_feature",
+            "anomaly_reason",
             "inverter_temperature_c",
             "ac_power_kw",
         ]
@@ -967,7 +967,7 @@ with tab_anomalies:
         friendly_names = {
             "timestamp": "Time",
             "anomaly_score_ratio": "Severity",
-            "top_contributing_feature": "Likely Cause",
+            "anomaly_reason": "Likely Cause",
             "inverter_temperature_c": "Inverter Temp (°C)",
             "ac_power_kw": "AC Power (kW)",
         }
