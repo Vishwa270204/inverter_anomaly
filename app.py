@@ -959,7 +959,7 @@ with tab_anomalies:
         display_columns = [
             "timestamp",
             "anomaly_score_ratio",
-            "anomaly_reason",
+            "top_contributing_feature",
             "inverter_temperature_c",
             "ac_power_kw",
         ]
@@ -967,7 +967,7 @@ with tab_anomalies:
         friendly_names = {
             "timestamp": "Time",
             "anomaly_score_ratio": "Severity",
-            "anomaly_reason": "Likely Cause",
+            "top_contributing_feature": "Likely Cause",
             "inverter_temperature_c": "Inverter Temp (°C)",
             "ac_power_kw": "AC Power (kW)",
         }
@@ -1017,7 +1017,7 @@ with tab_investigate:
             end_time = pd.to_datetime(selected_anomaly["timestamp"])
             trend_window, window_start = get_trend_window(df, end_time, hours_back=24)
 
-            if len(trend_window) > 0:
+            if len(trend_window) > 1:
                 fig_trend = go.Figure()
                 if "ac_power_kw" in trend_window.columns:
                     fig_trend.add_trace(
@@ -1056,7 +1056,10 @@ with tab_investigate:
                 )
                 st.plotly_chart(fig_trend, width="stretch")
             else:
-                st.info("No data available in the 24 hours before this anomaly.")
+                st.info(
+                    "Not enough history before this anomaly to draw a trend "
+                    "— it's at (or very near) the start of the available data."
+                )
 
         # ---- Top contributors ----
         with detail_col2:
