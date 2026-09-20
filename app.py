@@ -61,8 +61,15 @@ st.markdown(
 
     /* Fit the whole app to the viewport width and cut wasted vertical
        space so pages need far less scrolling. */
+    /* Streamlit's fixed top toolbar (Share/star/menu icons) sits above our
+       content. Shrink it and give the block-container just enough top
+       clearance to sit below it instead of being hidden underneath it. */
+    header[data-testid="stHeader"] {
+        height: 2.4rem;
+        background: transparent;
+    }
     .block-container {
-        padding-top: 0.3rem;
+        padding-top: 2.6rem;
         padding-bottom: 0.5rem;
         padding-left: 1.5rem;
         padding-right: 1.5rem;
