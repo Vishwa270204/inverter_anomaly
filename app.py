@@ -5,7 +5,8 @@ Production frontend only. All ML/training happens in inverter_anomaly.ipynb.
 
 Reads:
     dashboard_data.parquet  -> evaluation-period observations + model output
-    trend_data.parquet      -> full historical time series (pre-anomaly context)
+                                (the only data source; also used for the
+                                24-hour pre-anomaly context)
 
 Does NOT retrain or re-run the notebook. Does NOT treat anomaly_score_ratio
 as a probability. Feature contributions are reported as "contributed most
@@ -177,14 +178,6 @@ def load_dashboard_data(path="dashboard_data.parquet"):
     return df
 
 
-@st.cache_data
-def load_trend_data(path="trend_data.parquet"):
-    df = pd.read_parquet(path)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
-    return df
-
-
 def safe_load(loader, path, label):
     try:
         return loader(path)
@@ -200,7 +193,6 @@ def safe_load(loader, path, label):
 
 
 df = safe_load(load_dashboard_data, "dashboard_data.parquet", "Dashboard data")
-trend_df = safe_load(load_trend_data, "trend_data.parquet", "Trend data")
 
 if df.empty:
     st.error("`dashboard_data.parquet` loaded but contains no rows.")
@@ -225,13 +217,11 @@ def fmt_time(value, dash="—"):
     return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M")
 
 
-def get_trend_window(trend_source, end_time, hours_back=24):
-    """Slice trend_data.parquet to [end_time - hours_back, end_time]."""
+def get_trend_window(source, end_time, hours_back=24):
+    """Slice dashboard_data.parquet to [end_time - hours_back, end_time]."""
     end_time = pd.to_datetime(end_time)
     start_time = end_time - timedelta(hours=hours_back)
-    window = trend_source[
-        (trend_source["timestamp"] >= start_time) & (trend_source["timestamp"] <= end_time)
-    ].copy()
+    window = source[(source["timestamp"] >= start_time) & (source["timestamp"] <= end_time)].copy()
     return window, start_time
 
 
@@ -288,7 +278,7 @@ def get_anomaly_details(timestamp, inverter_id=None):
 def get_pre_anomaly_trend(timestamp, inverter_id=None, hours=24):
     target = pd.to_datetime(timestamp)
     start = target - timedelta(hours=float(hours))
-    source = trend_df[(trend_df["timestamp"] >= start) & (trend_df["timestamp"] <= target)].copy()
+    source = df[(df["timestamp"] >= start) & (df["timestamp"] <= target)].copy()
     if inverter_id is not None and "inverter_id" in source.columns:
         source = source[source["inverter_id"].astype(str) == str(inverter_id)]
     if source.empty:
@@ -831,6 +821,9 @@ with tab_overview:
         else:
             st.metric("Max Inverter Temperature", "—")
 
+    if total_observations > 0 and total_anomalies == 0:
+        st.caption("✅ No anomalies found in this period — everything looks normal.")
+
     st.write("")
     st.markdown("##### Anomaly Score Over Time")
     st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
@@ -980,8 +973,14 @@ with tab_anomalies:
         }
         table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
         st.dataframe(table, width="stretch", hide_index=True)
+    elif total_observations > 0:
+        st.success(
+            "✅ No anomalies in this period — the inverter behaved normally "
+            f"across all {total_observations:,} readings. Try a wider date "
+            "range to see historical anomalies."
+        )
     else:
-        st.success("No anomalies detected in the selected period.")
+        st.info("No readings in this date range. Try a different range above.")
 
 # ------------------------------------------------------------
 # TAB: INVESTIGATE (drill into one anomaly + AI explanation)
@@ -1016,7 +1015,7 @@ with tab_investigate:
             st.caption("Power & temperature in the 24 hours leading up to it.")
 
             end_time = pd.to_datetime(selected_anomaly["timestamp"])
-            trend_window, window_start = get_trend_window(trend_df, end_time, hours_back=24)
+            trend_window, window_start = get_trend_window(df, end_time, hours_back=24)
 
             if len(trend_window) > 0:
                 fig_trend = go.Figure()
@@ -1152,7 +1151,11 @@ with tab_investigate:
                 st.markdown(st.session_state["last_ai_explanation"])
 
     else:
-        st.info("No anomalies in the current selection to investigate.")
+        st.info(
+            "Nothing to investigate here — there are no anomalies in the "
+            "selected date range. Widen the date range or clear "
+            "**Show anomalies only** to bring up more data."
+        )
 
 
 # ============================================================
