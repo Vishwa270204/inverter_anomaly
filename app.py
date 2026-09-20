@@ -12,8 +12,10 @@ as a probability. Feature contributions are reported as "contributed most
 to reconstruction error," never as a proven cause.
 """
 
+import html
 import json
 import os
+import re
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -42,9 +44,8 @@ st.markdown(
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    /* Scale everything down a notch (most Streamlit sizing is in rem) so
-       more content fits in the viewport without scrolling. */
-    html { font-size: 14px; }
+    /* Keep the dashboard compact, but do not make the text look tiny. */
+    html { font-size: 16px; }
 
     :root {
         --primary: #0F3554;
@@ -196,6 +197,95 @@ st.markdown(
         font-size: 0.83rem !important;
         color: #334155 !important;
     }
+
+    /* ---------- AI Explanation ---------- */
+    .ai-title {
+        color: #0F172A;
+        font-size: 1.18rem;
+        font-weight: 700;
+        line-height: 1.3;
+        margin-top: 0.25rem;
+        margin-bottom: 0.15rem;
+    }
+
+    .ai-subtitle {
+        color: #64748B;
+        font-size: 0.92rem;
+        line-height: 1.45;
+        margin-bottom: 0.65rem;
+    }
+
+    .ai-card {
+        width: 100%;
+        box-sizing: border-box;
+        background: #FFFFFF;
+        border: 1px solid #D9E1EA;
+        border-radius: 12px;
+        padding: 1.15rem 1.35rem;
+        box-shadow: 0 2px 7px rgba(15, 23, 42, 0.05);
+    }
+
+    .ai-row {
+        padding: 0.15rem 0 0.9rem 0;
+    }
+
+    .ai-row:last-child {
+        padding-bottom: 0;
+    }
+
+    .ai-label {
+        color: #0F3554;
+        font-size: 1rem;
+        font-weight: 700;
+        line-height: 1.35;
+        margin-bottom: 0.28rem;
+    }
+
+    .ai-body {
+        color: #1E293B;
+        font-size: 1rem;
+        line-height: 1.65;
+        word-break: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .ai-checks {
+        margin: 0.15rem 0 0 1.35rem;
+        padding: 0;
+    }
+
+    .ai-checks li {
+        color: #1E293B;
+        font-size: 1rem;
+        line-height: 1.6;
+        margin-bottom: 0.28rem;
+        padding-left: 0.15rem;
+    }
+
+    .ai-generating {
+        width: 100%;
+        box-sizing: border-box;
+        background: #F7F9FC;
+        border: 1px solid #D9E1EA;
+        border-radius: 12px;
+        padding: 1.05rem 1.25rem;
+        min-height: 72px;
+        display: flex;
+        align-items: center;
+    }
+
+    .ai-generating span {
+        color: #475569;
+        font-size: 1rem;
+        line-height: 1.5;
+    }
+
+    /* Give the AI action row a little more breathing room. */
+    .ai-action-row {
+        margin-top: 0.1rem;
+        margin-bottom: 0.65rem;
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -769,6 +859,57 @@ def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
     return evidence
 
 
+
+def render_ai_explanation(explanation):
+    """Render the four-section AI explanation as a readable full-width card."""
+    if not explanation:
+        return
+
+    text = str(explanation).strip()
+    pattern = re.compile(
+        r"(?ms)^\s*(What happened|When|Why it was flagged|What to check):\s*(.*?)(?=^\s*(?:What happened|When|Why it was flagged|What to check):|\Z)"
+    )
+    sections = {m.group(1): m.group(2).strip() for m in pattern.finditer(text)}
+
+    # If the model response does not match the expected format, keep it readable
+    # rather than exposing raw/unstyled markdown.
+    if len(sections) < 4:
+        safe = html.escape(text).replace("\n", "<br>")
+        st.markdown(
+            f'<div class="ai-card"><div class="ai-body">{safe}</div></div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    order = ["What happened", "When", "Why it was flagged", "What to check"]
+    parts = ['<div class="ai-card">']
+
+    for title in order:
+        body = sections.get(title, "")
+        parts.append('<div class="ai-row">')
+        parts.append(f'<div class="ai-label">{html.escape(title)}</div>')
+
+        if title == "What to check":
+            items = re.findall(r"(?m)^\s*\d+[.)]\s*(.+)$", body)
+            if items:
+                parts.append('<ol class="ai-checks">')
+                for item in items:
+                    parts.append(f"<li>{html.escape(item.strip())}</li>")
+                parts.append("</ol>")
+            else:
+                parts.append(
+                    f'<div class="ai-body">{html.escape(body).replace(chr(10), "<br>")}</div>'
+                )
+        else:
+            safe_body = html.escape(body).replace("\n", "<br>")
+            parts.append(f'<div class="ai-body">{safe_body}</div>')
+
+        parts.append("</div>")
+
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
 # ============================================================
 # HEADER (compact)
 # ============================================================
@@ -1234,8 +1375,11 @@ with tab_investigate:
         st.divider()
 
         # ---- AI explanation ----
-        st.markdown("##### AI Explanation")
-        st.caption("A plain-language summary of what happened and what to check.")
+        st.markdown('<div class="ai-title">AI Explanation</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="ai-subtitle">A plain-language summary of what happened and what to check.</div>',
+            unsafe_allow_html=True,
+        )
 
         # Cache the explanation per anomaly (timestamp + inverter_id) so
         # switching anomalies always regenerates -- it never shows a stale
@@ -1249,24 +1393,14 @@ with tab_investigate:
         anomaly_key = f"{ts_key}|{inv_key}"
         cached = st.session_state["ai_explanations"].get(anomaly_key)
 
-        ai_text_col, ai_button_col = st.columns([5, 1])
+        ai_text_col, ai_button_col = st.columns([5.5, 1.2])
 
         with ai_text_col:
             if cached is None:
                 st.markdown(
                     """
-                    <div style="
-                        background:#F7F9FC;
-                        border:1px solid #D9E1EA;
-                        border-radius:8px;
-                        padding:14px 18px;
-                        min-height:56px;
-                        display:flex;
-                        align-items:center;
-                    ">
-                        <span style="color:#64748B; font-size:0.92rem;">
-                            Generating an explanation for this anomaly automatically...
-                        </span>
+                    <div class="ai-generating">
+                        <span>Generating an explanation for this anomaly automatically...</span>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -1294,8 +1428,7 @@ with tab_investigate:
         if cached.get("error"):
             st.error(f"AI explanation failed: {cached['error']}")
         elif cached.get("explanation"):
-            with st.container(border=True):
-                st.markdown(cached["explanation"])
+            render_ai_explanation(cached["explanation"])
 
     else:
         st.info(
