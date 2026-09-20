@@ -42,6 +42,10 @@ st.markdown(
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
+    /* Scale everything down a notch (most Streamlit sizing is in rem) so
+       more content fits in the viewport without scrolling. */
+    html { font-size: 14px; }
+
     :root {
         --primary: #0F3554;
         --primary-light: #164A73;
@@ -58,16 +62,25 @@ st.markdown(
     /* Fit the whole app to the viewport width and cut wasted vertical
        space so pages need far less scrolling. */
     .block-container {
-        padding-top: 0.6rem;
-        padding-bottom: 0.8rem;
+        padding-top: 0.3rem;
+        padding-bottom: 0.5rem;
         padding-left: 1.5rem;
         padding-right: 1.5rem;
         max-width: 100%;
     }
 
     /* Tighten the default gap Streamlit puts between stacked elements */
-    [data-testid="stVerticalBlock"] { gap: 0.5rem; }
+    [data-testid="stVerticalBlock"] { gap: 0.35rem; }
     div[data-testid="stElementContainer"] { margin-bottom: 0 !important; }
+
+    /* Date inputs / selects / checkboxes: shrink their control height */
+    [data-testid="stDateInput"] input,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+        min-height: 2rem !important;
+        padding-top: 0.25rem !important;
+        padding-bottom: 0.25rem !important;
+    }
+    [data-testid="stWidgetLabel"] p { margin-bottom: 0.1rem !important; }
 
     /* ---------- Metric / KPI cards ---------- */
     [data-testid="stMetric"] {
@@ -156,10 +169,11 @@ st.markdown(
     }
     div[data-testid="stVerticalBlockBorderWrapper"] {
         border-radius: 10px !important;
+        padding: 0.5rem 0.9rem !important;
     }
     /* Bordered containers (e.g. the filter bar) get compact inner padding */
     div[data-testid="stVerticalBlockBorderWrapper"] > div > div[data-testid="stVerticalBlock"] {
-        gap: 0.4rem;
+        gap: 0.3rem;
     }
 
     /* ---------- Dataframes ---------- */
@@ -740,7 +754,7 @@ st.markdown(
                 Inverter Anomaly Detection
             </div>
             <div style="color:#B9CFE2; font-size:0.78rem; margin-top:0.05rem;">
-                Spot unusual inverter behavior early and see plain-language explanations.
+                Spot unusual inverter behavior early
             </div>
         </div>
     </div>
@@ -803,11 +817,7 @@ with st.container(border=True):
         caption_col = filter_cols[3]
 
     with caption_col:
-        st.write("")
-        st.caption(
-            "**Severity** shows how far a reading is above the normal range "
-            "— higher means more unusual."
-        )
+        st.caption("**Severity**: higher = further outside normal range.")
 
     if start_date > end_date:
         st.warning("Start date is after end date — swap them to see results.")
@@ -929,7 +939,7 @@ with tab_overview:
             yaxis_title="Anomaly Score",
             yaxis_type="log",
             hovermode="x unified",
-            height=300,
+            height=250,
             template="plotly_white",
             margin=dict(t=10, l=10, r=10),
         )
@@ -975,7 +985,7 @@ with tab_trends:
                 xaxis_title="Time",
                 yaxis_title="Power (kW)",
                 hovermode="x unified",
-                height=280,
+                height=230,
                 template="plotly_white",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
                 margin=dict(t=30, l=10, r=10),
@@ -1015,7 +1025,7 @@ with tab_trends:
                 xaxis_title="Time",
                 yaxis_title="Temperature (°C)",
                 hovermode="x unified",
-                height=280,
+                height=230,
                 template="plotly_white",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
                 margin=dict(t=30, l=10, r=10),
@@ -1124,7 +1134,7 @@ with tab_investigate:
                     yaxis=dict(title="AC Power (kW)", side="left"),
                     yaxis2=dict(title="Temp (°C)", overlaying="y", side="right"),
                     hovermode="x unified",
-                    height=270,
+                    height=220,
                     template="plotly_white",
                     legend=dict(orientation="h", yanchor="bottom", y=1.12, xanchor="center", x=0.5),
                     margin=dict(l=50, r=50, t=40, b=40),
@@ -1167,7 +1177,7 @@ with tab_investigate:
                     fig_contrib.update_layout(
                         xaxis_title="Contribution (%)",
                         yaxis_title="",
-                        height=270,
+                        height=220,
                         template="plotly_white",
                         margin=dict(t=10, l=10, r=10, b=40),
                     )
