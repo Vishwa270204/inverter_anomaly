@@ -191,12 +191,14 @@ st.markdown(
     /* ---------- AI Explanation ---------- */
     .ai-title {
         color: #0F172A;
-        font-size: 1.5rem;
+        font-size: 1.8rem;
         font-weight: 700;
         line-height: 1.3;
         margin-top: 0.25rem;
         margin-bottom: 0.15rem;
     }
+
+    .ai-button-spacer { min-height: 2.7rem; }
 
     .ai-subtitle {
         color: #64748B;
@@ -211,7 +213,7 @@ st.markdown(
         background: #FFFFFF;
         border: 1px solid #D9E1EA;
         border-radius: 12px;
-        padding: 1.15rem 1.35rem;
+        padding: 1.35rem 1.5rem;
         box-shadow: 0 2px 7px rgba(15, 23, 42, 0.05);
     }
 
@@ -656,25 +658,21 @@ while...", "This should be checked...", "The available data does not confirm the
 cause."
 
 OUTPUT FORMAT
-Return exactly these four sections, in this order, with these exact headings, and nothing \
-else. Do not use Markdown, bold markers, bullets before the headings, or code fences. \
-Write the headings as plain text exactly as shown below:
+Return ONE single paragraph only.
 
-What happened:
-<one or two concise sentences>
+The paragraph must naturally include:
+- what happened
+- when it happened
+- why it was flagged
+- what should be checked
 
-When:
-<date and time>
+Do NOT use headings.
+Do NOT use bullet points.
+Do NOT use numbered lists.
+Do NOT use Markdown or bold markers.
+Do NOT use labels such as "What happened:", "When:", "Why it was flagged:", or "What to check:".
 
-Why it was flagged:
-<brief, evidence-based explanation of the unusual behavior, following the causality rules \
-above>
-
-What to check:
-<1-2 practical checks>
-
-Keep the entire response under about 100 words. Do not add any other sections or ML \
-terminology.
+Write 4-6 concise sentences in plain, professional language. Keep the entire response under about 110 words. Do not add any other sections or ML terminology.
 """
     messages = [
         {"role": "system", "content": system_prompt},
@@ -852,65 +850,22 @@ def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
 
 
 def render_ai_explanation(explanation):
-    """Render the AI response as a clean, structured dashboard card.
-
-    The LLM may return headings as plain text or markdown-bold headings
-    (for example, **What happened:**). Normalize both forms so raw **
-    markers are never shown to the dashboard user.
-    """
+    """Render the LLM response as one clean paragraph."""
     if not explanation:
         return
 
     text = str(explanation).strip()
-    # Normalize common markdown heading variants returned by the LLM.
-    text = re.sub(
-        r"(?im)^\s*\*{0,2}\s*(What happened|When|Why it was flagged|What to check)\s*:?\s*\*{0,2}\s*$",
-        lambda m: f"{m.group(1)}:",
-        text,
+
+    # Remove accidental Markdown markers if the model returns them.
+    text = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", text)
+    text = re.sub(r"^\s*(?:What happened|When|Why it was flagged|What to check)\s*:\s*", "", text, flags=re.I)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    safe = html.escape(text)
+    st.markdown(
+        f'<div class="ai-card"><div class="ai-body">{safe}</div></div>',
+        unsafe_allow_html=True,
     )
-
-    pattern = re.compile(
-        r"(?ms)^\s*(What happened|When|Why it was flagged|What to check):\s*(.*?)(?=^\s*(?:What happened|When|Why it was flagged|What to check):|\Z)"
-    )
-    sections = {m.group(1): m.group(2).strip() for m in pattern.finditer(text)}
-
-    if len(sections) < 4:
-        safe = html.escape(text).replace("\n", "<br>")
-        st.markdown(
-            f'<div class="ai-card"><div class="ai-body">{safe}</div></div>',
-            unsafe_allow_html=True,
-        )
-        return
-
-    order = ["What happened", "When", "Why it was flagged", "What to check"]
-    parts = ['<div class="ai-card">']
-
-    for title in order:
-        body = sections.get(title, "")
-        # Remove accidental markdown bold markers inside section text too.
-        body = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", body).strip()
-        parts.append('<div class="ai-row">')
-        parts.append(f'<div class="ai-label">{html.escape(title)}</div>')
-
-        if title == "What to check":
-            items = re.findall(r"(?m)^\s*(?:\d+[.)]|[-•])\s*(.+)$", body)
-            if items:
-                parts.append('<ol class="ai-checks">')
-                for item in items:
-                    parts.append(f"<li>{html.escape(item.strip())}</li>")
-                parts.append("</ol>")
-            else:
-                parts.append(
-                    f'<div class="ai-body">{html.escape(body).replace(chr(10), "<br>")}</div>'
-                )
-        else:
-            safe_body = html.escape(body).replace("\n", "<br>")
-            parts.append(f'<div class="ai-body">{safe_body}</div>')
-
-        parts.append("</div>")
-
-    parts.append("</div>")
-    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
 # ============================================================
@@ -1377,11 +1332,25 @@ if len(anomaly_df) > 0:
     # --------------------------------------------------------
     # AI EXPLANATION
     # --------------------------------------------------------
-    st.markdown('<div class="ai-title">AI Explanation</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="ai-subtitle">A plain-language summary of what happened, when it happened, why it was flagged, and what to check.</div>',
-        unsafe_allow_html=True,
-    )
+    ai_header_col, ai_button_col = st.columns([7, 1.35])
+
+    with ai_header_col:
+        st.markdown(
+            '<div class="ai-title">AI Explanation</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="ai-subtitle">A plain-language summary of what happened, when it happened, why it was flagged, and what to check.</div>',
+            unsafe_allow_html=True,
+        )
+
+    with ai_button_col:
+        regenerate = st.button(
+            "Regenerate",
+            type="primary",
+            use_container_width=True,
+            help="Generate a fresh explanation for this anomaly.",
+        )
 
     ts_key = clean_value(selected_anomaly.get("timestamp"))
     inv_key = (
@@ -1392,24 +1361,21 @@ if len(anomaly_df) > 0:
     anomaly_key = f"{ts_key}|{inv_key}"
     cached = st.session_state["ai_explanations"].get(anomaly_key)
 
-    ai_button_col = st.columns([5, 1])[1]
-    with ai_button_col:
-        regenerate = st.button(
-            "Regenerate",
-            type="primary",
-            use_container_width=True,
-            help="Ask the AI to re-explain this anomaly from its evidence.",
-        )
-
-    # Auto-generate the first time this anomaly is viewed. No prompt is ever
-    # typed by the user. The button only forces a fresh explanation.
     if regenerate or cached is None:
         with st.spinner("Generating explanation from the anomaly evidence..."):
             try:
                 ai_explanation, ai_evidence = generate_ai_explanation(selected_anomaly)
-                cached = {"explanation": ai_explanation, "evidence": ai_evidence, "error": None}
+                cached = {
+                    "explanation": ai_explanation,
+                    "evidence": ai_evidence,
+                    "error": None,
+                }
             except Exception as e:
-                cached = {"explanation": None, "evidence": None, "error": str(e)}
+                cached = {
+                    "explanation": None,
+                    "evidence": None,
+                    "error": str(e),
+                }
             st.session_state["ai_explanations"][anomaly_key] = cached
 
     if cached.get("error"):
