@@ -202,8 +202,7 @@ st.markdown(
 )
 
 
-st.session_state.setdefault("last_ai_explanation", None)
-st.session_state.setdefault("last_ai_evidence", None)
+st.session_state.setdefault("ai_explanations", {})
 
 # ============================================================
 # DATA LOADING (cached -- parquet is read once per session)
@@ -527,39 +526,74 @@ def generate_ai_explanation(selected_anomaly):
         else None
     )
     evidence = {}
-    system_prompt = """You are an industrial inverter anomaly explanation assistant.
+    system_prompt = """You are an assistant that explains inverter anomalies to a normal \
+dashboard user (not a technical or ML user), using only evidence returned by tools.
 
-Use only evidence returned by the supplied tools and the selected anomaly context.
+TOOL USE
+- Before writing your final answer, call the available tools -- get_anomaly_details, \
+get_pre_anomaly_trend, get_feature_contributions, get_operating_context -- for the given \
+timestamp and inverter_id, to gather the anomaly's operating status, daylight/time-of-day \
+context, power and current values, inverter and ambient temperature, efficiency, power \
+factor, frequency, communication/quality info, feature contributions, anomaly reason, and \
+the 24-hour pre-anomaly trend. Do not rely only on the timestamp/inverter_id given to you --
+use the tools to gather this evidence yourself.
+- Never invent, estimate, or assume a value that was not returned by a tool. If a tool \
+returns an error or is missing data, work only with what is available.
+- If the remaining evidence is not enough to explain why the anomaly happened, say exactly: \
+"The available data is not sufficient to determine the exact reason." Do not guess.
 
-Write for a normal dashboard user, not a technical or ML user. Use simple, everyday language.
+CAUSALITY RULES (critical)
+- A feature's contribution means it was one of the readings that stood out as unusual in \
+the anomaly evidence. It does NOT mean that feature caused the anomaly, and it does NOT mean \
+a component failed. Never state or imply a root cause (e.g. never say "high temperature \
+caused the anomaly" or "the cooling system failed").
+- Instead, describe a contributing parameter as something that stood out, and offer a \
+practical check rather than a diagnosis, e.g. "Temperature was one of the parameters that \
+contributed strongly to the unusual pattern" and "Cooling performance should be checked if \
+this pattern persists."
+- Keep observed fact, possible explanation, and recommended check clearly separate -- do not \
+blur them into a single causal claim.
 
-Do NOT mention these technical terms in the final answer:
-- Autoencoder
-- reconstruction error
-- EVT
-- POT
-- anomaly_score_ratio
-- threshold
-- feature contribution percentage
-- model score
-- confidence score
-- probability
+NORMAL-OPERATING-CONDITIONS RULE
+- Before calling anything unusual, consider is_daylight, hour, inverter_status, power level, \
+ambient temperature, and the normal pre-anomaly trend from the tools.
+- Do not call a change abnormal just because a value is higher than at an earlier time. For \
+example, a temperature rise around midday alongside a normal rise in ambient temperature and \
+power output is not automatically unusual -- say so plainly rather than flagging it as \
+abnormal when it looks consistent with normal operation.
 
-Explain the observation in plain English. For example, say "the inverter behaved unusually" instead of describing the ML detection method.
+LANGUAGE RULES
+- Use simple, plain, professional language.
+- Never mention: autoencoder, reconstruction error, EVT, POT, anomaly_score_ratio, threshold, \
+feature contribution percentage, model score, confidence score, probability, or any other ML \
+model internals.
+- Never say things like "the model predicts with X% confidence", "the probability of failure \
+is...", "the root cause is...", "the ML model determined that...", or "the autoencoder \
+detected...".
+- Prefer phrasing like: "The inverter showed unusual behavior...", "The main parameter \
+contributing to the unusual pattern was...", "Before the anomaly, AC power decreased \
+while...", "This should be checked...", "The available data does not confirm the exact \
+cause."
 
-Do not call an anomaly a fault, failure, breakdown, or root cause unless the available evidence directly supports that statement.
+OUTPUT FORMAT
+Return exactly these four sections, in this order, with these exact headings, and nothing \
+else:
 
-Do not claim that one variable caused another. If the evidence only shows that temperature, power, current, or another value changed, describe it as an observation.
+What happened:
+<one or two concise sentences>
 
-Consider daylight, time of day, operating status, and normal operating conditions before describing something as unusual.
+When:
+<date and time>
 
-Give exactly these 4 short sections:
-**What happened:** One simple sentence describing the unusual behavior.
-**When:** Give the date and time.
-**Why it was flagged:** Briefly explain the unusual change in normal language.
-**What to check:** Give 1–2 practical checks.
+Why it was flagged:
+<brief, evidence-based explanation of the unusual behavior, following the causality rules \
+above>
 
-Keep the total response under 80 words. Do not add extra sections, technical explanations, or ML terminology. If the evidence is insufficient, say so briefly rather than guessing.
+What to check:
+<1-2 practical checks>
+
+Keep the entire response under about 100 words. Do not add any other sections or ML \
+terminology.
 """
     messages = [
         {"role": "system", "content": system_prompt},
@@ -567,9 +601,12 @@ Keep the total response under 80 words. Do not add extra sections, technical exp
             "role": "user",
             "content": json.dumps(
                 {
+                    "instruction": (
+                        "Explain this anomaly for a dashboard user. Call the tools to "
+                        "gather the evidence you need -- do not rely on this message alone."
+                    ),
                     "selected_timestamp": timestamp,
                     "inverter_id": inverter_id,
-                    "selected_row": row_to_dict(selected_anomaly),
                 },
                 default=str,
             ),
@@ -1200,10 +1237,22 @@ with tab_investigate:
         st.markdown("##### AI Explanation")
         st.caption("A plain-language summary of what happened and what to check.")
 
+        # Cache the explanation per anomaly (timestamp + inverter_id) so
+        # switching anomalies always regenerates -- it never shows a stale
+        # explanation left over from a previously selected anomaly.
+        ts_key = clean_value(selected_anomaly.get("timestamp"))
+        inv_key = (
+            clean_value(selected_anomaly.get("inverter_id"))
+            if "inverter_id" in selected_anomaly.index
+            else None
+        )
+        anomaly_key = f"{ts_key}|{inv_key}"
+        cached = st.session_state["ai_explanations"].get(anomaly_key)
+
         ai_text_col, ai_button_col = st.columns([5, 1])
 
         with ai_text_col:
-            if not st.session_state.get("last_ai_explanation"):
+            if cached is None:
                 st.markdown(
                     """
                     <div style="
@@ -1216,8 +1265,7 @@ with tab_investigate:
                         align-items:center;
                     ">
                         <span style="color:#64748B; font-size:0.92rem;">
-                            Click Generate to see why this anomaly was flagged
-                            and what to check.
+                            Generating an explanation for this anomaly automatically...
                         </span>
                     </div>
                     """,
@@ -1225,25 +1273,29 @@ with tab_investigate:
                 )
 
         with ai_button_col:
-            generate_ai = st.button(
-                "Generate",
+            regenerate = st.button(
+                "Regenerate",
                 type="primary",
                 use_container_width=True,
-                help="Generate a concise explanation from the selected anomaly evidence.",
+                help="Ask the AI to re-explain this anomaly from its evidence.",
             )
 
-        if generate_ai:
+        # Auto-generate the first time this anomaly is viewed. No prompt is
+        # ever typed by the user -- the button only forces a fresh call.
+        if regenerate or cached is None:
             with st.spinner("Generating explanation..."):
                 try:
                     ai_explanation, ai_evidence = generate_ai_explanation(selected_anomaly)
-                    st.session_state["last_ai_explanation"] = ai_explanation
-                    st.session_state["last_ai_evidence"] = ai_evidence
+                    cached = {"explanation": ai_explanation, "evidence": ai_evidence, "error": None}
                 except Exception as e:
-                    st.error(f"AI explanation failed: {e}")
+                    cached = {"explanation": None, "evidence": None, "error": str(e)}
+                st.session_state["ai_explanations"][anomaly_key] = cached
 
-        if st.session_state.get("last_ai_explanation"):
+        if cached.get("error"):
+            st.error(f"AI explanation failed: {cached['error']}")
+        elif cached.get("explanation"):
             with st.container(border=True):
-                st.markdown(st.session_state["last_ai_explanation"])
+                st.markdown(cached["explanation"])
 
     else:
         st.info(
