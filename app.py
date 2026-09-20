@@ -725,28 +725,36 @@ max_date = df["timestamp"].max().date()
 show_inverter_filter = "inverter_id" in df.columns and df["inverter_id"].nunique() > 1
 
 with st.container(border=True):
-    filter_cols = st.columns([2, 1, 1, 2] if show_inverter_filter else [2, 1, 2])
+    filter_cols = st.columns([1.2, 1.2, 1, 1, 2] if show_inverter_filter else [1.2, 1.2, 1, 2])
 
     with filter_cols[0]:
-        selected_dates = st.date_input(
-            "Date range",
-            value=(min_date, max_date),
+        start_date = st.date_input(
+            "Start date",
+            value=min_date,
             min_value=min_date,
             max_value=max_date,
         )
 
     with filter_cols[1]:
-        st.write("")  # align checkbox with the date input
+        end_date = st.date_input(
+            "End date",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date,
+        )
+
+    with filter_cols[2]:
+        st.write("")  # align checkbox with the date inputs
         show_anomalies_only = st.checkbox("Show anomalies only", value=False)
 
     if show_inverter_filter:
-        with filter_cols[2]:
+        with filter_cols[3]:
             inverter_options = ["All"] + sorted(df["inverter_id"].dropna().unique().tolist())
             selected_inverter = st.selectbox("Inverter", inverter_options)
-        caption_col = filter_cols[3]
+        caption_col = filter_cols[4]
     else:
         selected_inverter = "All"
-        caption_col = filter_cols[2]
+        caption_col = filter_cols[3]
 
     with caption_col:
         st.write("")
@@ -755,20 +763,20 @@ with st.container(border=True):
             "— higher means more unusual."
         )
 
+    if start_date > end_date:
+        st.warning("Start date is after end date — swap them to see results.")
+
 
 # ============================================================
 # FILTER DATA
 # ============================================================
 
-if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
-    start_date, end_date = selected_dates
+if start_date <= end_date:
     filtered_df = df[
         (df["timestamp"].dt.date >= start_date) & (df["timestamp"].dt.date <= end_date)
     ].copy()
 else:
-    # User has only picked one end of the range so far -- show everything
-    # rather than erroring, and let them finish picking.
-    filtered_df = df.copy()
+    filtered_df = df.iloc[0:0].copy()  # empty until the dates are fixed
 
 if selected_inverter != "All" and "inverter_id" in filtered_df.columns:
     filtered_df = filtered_df[filtered_df["inverter_id"] == selected_inverter].copy()
