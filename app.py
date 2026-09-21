@@ -301,8 +301,6 @@ def load_dashboard_data(path="dashboard_data.parquet"):
     else:
         df["anomaly_flag"] = False
     return df
-st.write("DEBUG - dashboard columns:", df.columns.tolist())
-st.write("DEBUG - DC Power exists:", "dc_power_kw" in df.columns)
 
 @st.cache_data
 def load_trend_data(path="trend_data.parquet"):
@@ -327,7 +325,8 @@ def safe_load(loader, path, label):
 
 
 df = safe_load(load_dashboard_data, "dashboard_data.parquet", "Dashboard data")
-
+st.write("DEBUG - dashboard columns:", df.columns.tolist())
+st.write("DEBUG - DC Power exists:", "dc_power_kw" in df.columns)
 if df.empty:
     st.error("`dashboard_data.parquet` loaded but contains no rows.")
     st.stop()
