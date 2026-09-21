@@ -426,7 +426,7 @@ def get_contribution_cols(frame):
 
 
 @st.cache_resource
-def get_groq_client():
+def get_groq_client2():
     """Create one Groq client per Streamlit session/process."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -438,6 +438,25 @@ def get_groq_client():
         return None
     return Groq(api_key=api_key)
 
+@st.cache_resource
+def get_openrouter_client():
+    """Return OpenRouter API configuration."""
+
+    api_key = "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"
+
+    if not api_key:
+        try:
+            api_key = st.secrets["openrouter"]["api_key"]
+        except Exception:
+            api_key = None
+
+    if not api_key:
+        return None
+
+    return {
+        "api_key": api_key,
+        "url": "https://openrouter.ai/api/v1/chat/completions"
+    }
 
 # Controlled backend tools used by the AI analyst. The LLM can request
 # evidence, but it never gets arbitrary Python/database access.
@@ -761,7 +780,9 @@ def execute_ai_tool(name, args):
 
 
 def generate_ai_explanation(selected_anomaly):
-    client = get_groq_client()
+    #client = get_groq_client()
+    client = get_openrouter_client()
+
     if client is None:
         raise RuntimeError(
             "GROQ_API_KEY is not configured. Add [groq] api_key to Streamlit Cloud Secrets."
@@ -772,81 +793,83 @@ def generate_ai_explanation(selected_anomaly):
         if "inverter_id" in selected_anomaly.index
         else None
     )
+
+
     evidence = {}
     system_prompt = """You are an assistant that explains inverter anomalies to a normal \
-dashboard user (not a technical or ML user), using only evidence returned by tools.
+    dashboard user (not a technical or ML user), using only evidence returned by tools.
 
-TOOL USE- Before writing your final answer, call the available tools -- get_anomaly_details,
-get_pre_anomaly_trend, get_feature_contributions, get_operating_context, and
-get_baseline_context -- for the given timestamp and inverter_id, to gather the
-anomaly's operating status, daylight/time-of-day context, power and current values,
-inverter and ambient temperature, efficiency, power factor, frequency,
-communication/quality info, feature contributions, anomaly reason, the 24-hour
-pre-anomaly trend, and healthy reference values under similar operating
-conditions. Use the healthy baseline to compare the anomaly's actual readings
-with normal healthy values for those conditions. Do not rely only on the
-timestamp/inverter_id given to you -- use the tools to gather this evidence yourself.
-- Never invent, estimate, or assume a value that was not returned by a tool. If a tool \
-returns an error or is missing data, work only with what is available.
-- If the remaining evidence is not enough to explain why the anomaly happened, say exactly: \
-"The available data is not sufficient to determine the exact reason." Do not guess.
+    TOOL USE- Before writing your final answer, call the available tools -- get_anomaly_details,
+    get_pre_anomaly_trend, get_feature_contributions, get_operating_context, and
+    get_baseline_context -- for the given timestamp and inverter_id, to gather the
+    anomaly's operating status, daylight/time-of-day context, power and current values,
+    inverter and ambient temperature, efficiency, power factor, frequency,
+    communication/quality info, feature contributions, anomaly reason, the 24-hour
+    pre-anomaly trend, and healthy reference values under similar operating
+    conditions. Use the healthy baseline to compare the anomaly's actual readings
+    with normal healthy values for those conditions. Do not rely only on the
+    timestamp/inverter_id given to you -- use the tools to gather this evidence yourself.
+    - Never invent, estimate, or assume a value that was not returned by a tool. If a tool \
+    returns an error or is missing data, work only with what is available.
+    - If the remaining evidence is not enough to explain why the anomaly happened, say exactly: \
+    "The available data is not sufficient to determine the exact reason." Do not guess.
 
-CAUSALITY RULES (critical)
-- A feature's contribution means it was one of the readings that stood out as unusual in \
-the anomaly evidence. It does NOT mean that feature caused the anomaly, and it does NOT mean \
-a component failed. Never state or imply a root cause (e.g. never say "high temperature \
-caused the anomaly" or "the cooling system failed").
-- Instead, describe a contributing parameter as something that stood out, and offer a \
-practical check rather than a diagnosis, e.g. "Temperature was one of the parameters that \
-contributed strongly to the unusual pattern" and "Cooling performance should be checked if \
-this pattern persists."
-- Keep observed fact, possible explanation, and recommended check clearly separate -- do not \
-blur them into a single causal claim.
-- The healthy baseline is a comparison reference only. It shows whether a
-reading is unusual compared with healthy operation under similar conditions.
-It does not prove why the anomaly occurred, identify a failed component, or
-establish a root cause.
+    CAUSALITY RULES (critical)
+    - A feature's contribution means it was one of the readings that stood out as unusual in \
+    the anomaly evidence. It does NOT mean that feature caused the anomaly, and it does NOT mean \
+    a component failed. Never state or imply a root cause (e.g. never say "high temperature \
+    caused the anomaly" or "the cooling system failed").
+    - Instead, describe a contributing parameter as something that stood out, and offer a \
+    practical check rather than a diagnosis, e.g. "Temperature was one of the parameters that \
+    contributed strongly to the unusual pattern" and "Cooling performance should be checked if \
+    this pattern persists."
+    - Keep observed fact, possible explanation, and recommended check clearly separate -- do not \
+    blur them into a single causal claim.
+    - The healthy baseline is a comparison reference only. It shows whether a
+    reading is unusual compared with healthy operation under similar conditions.
+    It does not prove why the anomaly occurred, identify a failed component, or
+    establish a root cause.
 
-NORMAL-OPERATING-CONDITIONS RULE
-- Before calling anything unusual, consider is_daylight, hour, month,
-inverter_status, power level, ambient temperature, the healthy baseline under
-similar conditions, and the normal pre-anomaly trend from the tools.
-- A value should be described as unusual when it differs materially from the
-healthy reference for comparable operating conditions. Do not call a change
-abnormal merely because it is higher than at an earlier time.
-- The healthy baseline is evidence of what healthy operation normally looked
-like under similar conditions; it is not evidence of the cause of the anomaly.
+    NORMAL-OPERATING-CONDITIONS RULE
+    - Before calling anything unusual, consider is_daylight, hour, month,
+    inverter_status, power level, ambient temperature, the healthy baseline under
+    similar conditions, and the normal pre-anomaly trend from the tools.
+    - A value should be described as unusual when it differs materially from the
+    healthy reference for comparable operating conditions. Do not call a change
+    abnormal merely because it is higher than at an earlier time.
+    - The healthy baseline is evidence of what healthy operation normally looked
+    like under similar conditions; it is not evidence of the cause of the anomaly.
 
-LANGUAGE RULES
-- Use simple, plain, professional language.
-- Never mention: autoencoder, reconstruction error, EVT, POT, anomaly_score_ratio, threshold, \
-feature contribution percentage, model score, confidence score, probability, or any other ML \
-model internals.
-- Never say things like "the model predicts with X% confidence", "the probability of failure \
-is...", "the root cause is...", "the ML model determined that...", or "the autoencoder \
-detected...".
-- Prefer phrasing like: "The inverter showed unusual behavior...", "The main parameter \
-contributing to the unusual pattern was...", "Before the anomaly, AC power decreased \
-while...", "This should be checked...", "The available data does not confirm the exact \
-cause."
+    LANGUAGE RULES
+    - Use simple, plain, professional language.
+    - Never mention: autoencoder, reconstruction error, EVT, POT, anomaly_score_ratio, threshold, \
+    feature contribution percentage, model score, confidence score, probability, or any other ML \
+    model internals.
+    - Never say things like "the model predicts with X% confidence", "the probability of failure \
+    is...", "the root cause is...", "the ML model determined that...", or "the autoencoder \
+    detected...".
+    - Prefer phrasing like: "The inverter showed unusual behavior...", "The main parameter \
+    contributing to the unusual pattern was...", "Before the anomaly, AC power decreased \
+    while...", "This should be checked...", "The available data does not confirm the exact \
+    cause."
 
-OUTPUT FORMAT
-Return ONE single paragraph only.
+    OUTPUT FORMAT
+    Return ONE single paragraph only.
 
-The paragraph must naturally include:
-- what happened
-- when it happened
-- why it was flagged
-- what should be checked
+    The paragraph must naturally include:
+    - what happened
+    - when it happened
+    - why it was flagged
+    - what should be checked
 
-Do NOT use headings.
-Do NOT use bullet points.
-Do NOT use numbered lists.
-Do NOT use Markdown or bold markers.
-Do NOT use labels such as "What happened:", "When:", "Why it was flagged:", or "What to check:".
+    Do NOT use headings.
+    Do NOT use bullet points.
+    Do NOT use numbered lists.
+    Do NOT use Markdown or bold markers.
+    Do NOT use labels such as "What happened:", "When:", "Why it was flagged:", or "What to check:".
 
-Write 4-6 concise sentences in plain, professional language. Keep the entire response under about 110 words. Do not add any other sections or ML terminology.
-"""
+    Write 4-6 concise sentences in plain, professional language. Keep the entire response under about 110 words. Do not add any other sections or ML terminology.
+    """
     messages = [
         {"role": "system", "content": system_prompt},
         {
@@ -865,48 +888,107 @@ Write 4-6 concise sentences in plain, professional language. Keep the entire res
         },
     ]
 
-    for _ in range(6):
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=messages,
-            tools=AI_TOOLS,
-            tool_choice="auto",
-            temperature=0.2,
-        )
-        msg = response.choices[0].message
+    # for _ in range(6):
+    #     response = client.chat.completions.create(
+    #         model="llama-3.1-8b-instant",
+    #         messages=messages,
+    #         tools=AI_TOOLS,
+    #         tool_choice="auto",
+    #         temperature=0.2,
+    #     )
+    #     msg = response.choices[0].message
 
-        if not msg.tool_calls:
-            return msg.content, evidence
+    #     if not msg.tool_calls:
+    #         return msg.content, evidence
+
+    #     messages.append(
+    #         {
+    #             "role": "assistant",
+    #             "content": msg.content or "",
+    #             "tool_calls": [
+    #                 {
+    #                     "id": tc.id,
+    #                     "type": "function",
+    #                     "function": {
+    #                         "name": tc.function.name,
+    #                         "arguments": tc.function.arguments,
+    #                     },
+    #                 }
+    #                 for tc in msg.tool_calls
+    #             ],
+    #         }
+    #     )
+
+    #     for tc in msg.tool_calls:
+    #         try:
+    #             args = json.loads(tc.function.arguments)
+    #         except Exception:
+    #             args = {}
+    #         result = execute_ai_tool(tc.function.name, args)
+    #         evidence[tc.function.name] = result
+    #         messages.append(
+    #             {
+    #                 "role": "tool",
+    #                 "tool_call_id": tc.id,
+    #                 "content": json.dumps(result, default=str),
+    #             }
+    #         )
+
+    for _ in range(6):
+
+        headers = {
+            "Authorization": f"Bearer {client}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": "nvidia/nemotron-3.5-lightning:free",
+            "messages": messages,
+            "tools": AI_TOOLS,
+            "tool_choice": "auto",
+            "temperature": 0.2,
+        }
+
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+        msg = data["choices"][0]["message"]
+
+        if not msg.get("tool_calls"):
+            return msg.get("content", ""), evidence
 
         messages.append(
             {
                 "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
+                "content": msg.get("content") or "",
+                "tool_calls": msg["tool_calls"],
             }
         )
 
-        for tc in msg.tool_calls:
+        for tc in msg["tool_calls"]:
             try:
-                args = json.loads(tc.function.arguments)
+                args = json.loads(tc["function"]["arguments"])
             except Exception:
                 args = {}
-            result = execute_ai_tool(tc.function.name, args)
-            evidence[tc.function.name] = result
+
+            result = execute_ai_tool(
+                tc["function"]["name"],
+                args
+            )
+
+            evidence[tc["function"]["name"]] = result
+
             messages.append(
                 {
                     "role": "tool",
-                    "tool_call_id": tc.id,
+                    "tool_call_id": tc["id"],
                     "content": json.dumps(result, default=str),
                 }
             )
@@ -1581,10 +1663,11 @@ if len(anomaly_df) > 0:
                     "error": None,
                 }
             except Exception as e:
+                import traceback
                 cached = {
                     "explanation": None,
                     "evidence": None,
-                    "error": str(e),
+                    "error": str(traceback.print_exc()),
                 }
             st.session_state["ai_explanations"][anomaly_key] = cached
 
