@@ -20,8 +20,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from groq import Groq
-
+from openai import OpenAI
 # ============================================================
 # PAGE CONFIG
 # ============================================================
@@ -426,18 +425,22 @@ def get_contribution_cols(frame):
 
 
 @st.cache_resource
-def get_groq_client():
-    """Create one Groq client per Streamlit session/process."""
-    api_key = os.getenv("GROQ_API_KEY")
+def get_openrouter_client():
+    api_key = os.getenv("OPENROUTER_API_KEY")
+
     if not api_key:
         try:
-            api_key = st.secrets["groq"]["api_key"]
+            api_key = st.secrets["OPENROUTER_API_KEY"]
         except Exception:
             api_key = None
+
     if not api_key:
         return None
-    return Groq(api_key=api_key)
 
+    return OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key
+    )
 
 # Controlled backend tools used by the AI analyst. The LLM can request
 # evidence, but it never gets arbitrary Python/database access.
@@ -761,7 +764,7 @@ def execute_ai_tool(name, args):
 
 
 def generate_ai_explanation(selected_anomaly):
-    client = get_groq_client()
+    client = get_openrouter_client()
     if client is None:
         raise RuntimeError(
             "GROQ_API_KEY is not configured. Add [groq] api_key to Streamlit Cloud Secrets."
@@ -867,7 +870,7 @@ Write 4-6 concise sentences in plain, professional language. Keep the entire res
 
     for _ in range(6):
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="google/gemma-4-26b-a4b-it:free",
             messages=messages,
             tools=AI_TOOLS,
             tool_choice="auto",
