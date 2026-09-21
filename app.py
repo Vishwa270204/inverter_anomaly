@@ -309,7 +309,30 @@ def load_trend_data(path="trend_data.parquet"):
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     return df
 
+@st.cache_data
+def load_dashboard_baseline(path="dashboard_baseline.parquet"):
+    baseline = pd.read_parquet(path)
 
+    numeric_cols = [
+        c for c in baseline.columns
+        if c.endswith("_median")
+        or c.endswith("_q10")
+        or c.endswith("_q90")
+    ]
+
+    for col in numeric_cols:
+        baseline[col] = pd.to_numeric(
+            baseline[col],
+            errors="coerce"
+        )
+
+    if "healthy_sample_count" in baseline.columns:
+        baseline["healthy_sample_count"] = pd.to_numeric(
+            baseline["healthy_sample_count"],
+            errors="coerce"
+        )
+
+    return baseline
 def safe_load(loader, path, label):
     try:
         return loader(path)
@@ -325,7 +348,11 @@ def safe_load(loader, path, label):
 
 
 df = safe_load(load_dashboard_data, "dashboard_data.parquet", "Dashboard data")
-
+baseline_df = safe_load(
+    load_dashboard_baseline,
+    "dashboard_baseline.parquet",
+    "Dashboard healthy baseline",
+)
 if df.empty:
     st.error("`dashboard_data.parquet` loaded but contains no rows.")
     st.stop()
@@ -520,7 +547,98 @@ def get_operating_context(timestamp, inverter_id=None):
         "communication_status_inv",
     ]
     return {k: clean_value(row.get(k)) for k in wanted if k in source.columns}
+def get_baseline_context(timestamp, inverter_id=None):
+    """
+    Retrieve healthy reference values for conditions similar to the
+    selected anomaly.
 
+    This is a comparison reference only. It does not establish cause.
+    """
+    target = pd.to_datetime(timestamp)
+
+    source = df.copy()
+
+    if inverter_id is not None and "inverter_id" in source.columns:
+        source = source[
+            source["inverter_id"].astype(str) == str(inverter_id)
+        ]
+
+    if source.empty:
+        return {"error": "No matching inverter data found."}
+
+    idx = (source["timestamp"] - target).abs().idxmin()
+    row = source.loc[idx]
+
+    conditions = {
+        "inverter_id": clean_value(row.get("inverter_id")),
+        "inverter_status": clean_value(row.get("inverter_status")),
+        "is_daylight": clean_value(row.get("is_daylight")),
+        "hour": clean_value(row.get("hour")),
+        "month": clean_value(row.get("month")),
+    }
+
+    baseline = baseline_df.copy()
+
+    # Match the most specific available healthy condition first.
+    match_cols = [
+        "inverter_id",
+        "inverter_status",
+        "is_daylight",
+        "hour",
+        "month",
+    ]
+
+    match_cols = [
+        c for c in match_cols
+        if c in baseline.columns and conditions.get(c) is not None
+    ]
+
+    matched = baseline.copy()
+
+    for col in match_cols:
+        matched = matched[
+            matched[col].astype(str) == str(conditions[col])
+        ]
+
+    if matched.empty:
+        return {
+            "error": "No healthy baseline group is available for the selected operating conditions.",
+            "conditions": conditions,
+        }
+
+    result = {
+        "conditions": conditions,
+        "healthy_sample_count": int(
+            matched["healthy_sample_count"].sum()
+        ),
+        "reference": {},
+    }
+
+    metric_names = sorted({
+        col[:-7]
+        for col in matched.columns
+        if col.endswith("_median")
+    })
+
+    for metric in metric_names:
+        median_col = f"{metric}_median"
+        q10_col = f"{metric}_q10"
+        q90_col = f"{metric}_q90"
+
+        values = matched[[median_col, q10_col, q90_col]].dropna(
+            how="all"
+        )
+
+        if values.empty:
+            continue
+
+        result["reference"][metric] = {
+            "median": clean_value(values[median_col].iloc[0]),
+            "typical_low_q10": clean_value(values[q10_col].iloc[0]),
+            "typical_high_q90": clean_value(values[q90_col].iloc[0]),
+        }
+
+    return result
 
 AI_TOOLS = [
     {
@@ -579,6 +697,29 @@ AI_TOOLS = [
             },
         },
     },
+        {
+        "type": "function",
+        "function": {
+            "name": "get_baseline_context",
+            "description": (
+                "Retrieve healthy operating reference values for the same "
+                "inverter and similar daylight, hour, month, and inverter "
+                "status conditions as the selected anomaly. Use these values "
+                "to determine whether anomaly readings are unusual compared "
+                "with healthy operation. This reference does not establish "
+                "cause or prove a fault."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "timestamp": {"type": "string"},
+                    "inverter_id": {"type": "string"},
+                },
+                "required": ["timestamp"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -591,6 +732,8 @@ def execute_ai_tool(name, args):
         return get_feature_contributions(**args)
     if name == "get_operating_context":
         return get_operating_context(**args)
+    if name == "get_baseline_context":
+        return get_baseline_context(**args)
     return {"error": f"Unknown tool: {name}"}
 
 
@@ -610,14 +753,16 @@ def generate_ai_explanation(selected_anomaly):
     system_prompt = """You are an assistant that explains inverter anomalies to a normal \
 dashboard user (not a technical or ML user), using only evidence returned by tools.
 
-TOOL USE
-- Before writing your final answer, call the available tools -- get_anomaly_details, \
-get_pre_anomaly_trend, get_feature_contributions, get_operating_context -- for the given \
-timestamp and inverter_id, to gather the anomaly's operating status, daylight/time-of-day \
-context, power and current values, inverter and ambient temperature, efficiency, power \
-factor, frequency, communication/quality info, feature contributions, anomaly reason, and \
-the 24-hour pre-anomaly trend. Do not rely only on the timestamp/inverter_id given to you --
-use the tools to gather this evidence yourself.
+TOOL USE- Before writing your final answer, call the available tools -- get_anomaly_details,
+get_pre_anomaly_trend, get_feature_contributions, get_operating_context, and
+get_baseline_context -- for the given timestamp and inverter_id, to gather the
+anomaly's operating status, daylight/time-of-day context, power and current values,
+inverter and ambient temperature, efficiency, power factor, frequency,
+communication/quality info, feature contributions, anomaly reason, the 24-hour
+pre-anomaly trend, and healthy reference values under similar operating
+conditions. Use the healthy baseline to compare the anomaly's actual readings
+with normal healthy values for those conditions. Do not rely only on the
+timestamp/inverter_id given to you -- use the tools to gather this evidence yourself.
 - Never invent, estimate, or assume a value that was not returned by a tool. If a tool \
 returns an error or is missing data, work only with what is available.
 - If the remaining evidence is not enough to explain why the anomaly happened, say exactly: \
@@ -634,14 +779,20 @@ contributed strongly to the unusual pattern" and "Cooling performance should be 
 this pattern persists."
 - Keep observed fact, possible explanation, and recommended check clearly separate -- do not \
 blur them into a single causal claim.
+- The healthy baseline is a comparison reference only. It shows whether a
+reading is unusual compared with healthy operation under similar conditions.
+It does not prove why the anomaly occurred, identify a failed component, or
+establish a root cause.
 
 NORMAL-OPERATING-CONDITIONS RULE
-- Before calling anything unusual, consider is_daylight, hour, inverter_status, power level, \
-ambient temperature, and the normal pre-anomaly trend from the tools.
-- Do not call a change abnormal just because a value is higher than at an earlier time. For \
-example, a temperature rise around midday alongside a normal rise in ambient temperature and \
-power output is not automatically unusual -- say so plainly rather than flagging it as \
-abnormal when it looks consistent with normal operation.
+- Before calling anything unusual, consider is_daylight, hour, month,
+inverter_status, power level, ambient temperature, the healthy baseline under
+similar conditions, and the normal pre-anomaly trend from the tools.
+- A value should be described as unusual when it differs materially from the
+healthy reference for comparable operating conditions. Do not call a change
+abnormal merely because it is higher than at an earlier time.
+- The healthy baseline is evidence of what healthy operation normally looked
+like under similar conditions; it is not evidence of the cause of the anomaly.
 
 LANGUAGE RULES
 - Use simple, plain, professional language.
