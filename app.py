@@ -867,7 +867,7 @@ Write 4-6 concise sentences in plain, professional language. Keep the entire res
 
     for _ in range(6):
         response = client.chat.completions.create(
-            model="google/gemma-4-26b-a4b-it:free",
+            model=""openai/gpt-oss-20b"",
             messages=messages,
             tools=AI_TOOLS,
             tool_choice="auto",
