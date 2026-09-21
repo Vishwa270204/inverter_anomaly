@@ -671,7 +671,12 @@ AI_TOOLS = [
             "description": "Retrieve the selected anomaly observation and model outputs.",
             "parameters": {
                 "type": "object",
-                "properties": {"timestamp": {"type": "string"}, "inverter_id": {"type": "string"}},
+                "properties": {
+                    "timestamp": {
+                        "type": "string",
+                        "description": "Timestamp of the selected anomaly."
+                    }
+                },
                 "required": ["timestamp"],
                 "additionalProperties": False,
             },
@@ -685,9 +690,11 @@ AI_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "timestamp": {"type": "string"},
-                    "inverter_id": {"type": "string"},
-                    "hours": {"type": "number"},
+                    "timestamp": {
+                        "type": "string",
+                        "description": "Timestamp of the selected anomaly."
+                        "hours": {"type": "number"},
+                    }
                 },
                 "required": ["timestamp"],
                 "additionalProperties": False,
@@ -701,7 +708,12 @@ AI_TOOLS = [
             "description": "Retrieve feature contributions to reconstruction error for the selected anomaly.",
             "parameters": {
                 "type": "object",
-                "properties": {"timestamp": {"type": "string"}, "inverter_id": {"type": "string"}},
+                "properties": {
+                    "timestamp": {
+                        "type": "string",
+                        "description": "Timestamp of the selected anomaly."
+                    }
+                },
                 "required": ["timestamp"],
                 "additionalProperties": False,
             },
@@ -714,7 +726,12 @@ AI_TOOLS = [
             "description": "Retrieve daylight, status, power, environmental, and communication context at the selected anomaly.",
             "parameters": {
                 "type": "object",
-                "properties": {"timestamp": {"type": "string"}, "inverter_id": {"type": "string"}},
+                "properties": {
+                    "timestamp": {
+                        "type": "string",
+                        "description": "Timestamp of the selected anomaly."
+                    }
+                },
                 "required": ["timestamp"],
                 "additionalProperties": False,
             },
@@ -735,8 +752,10 @@ AI_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "timestamp": {"type": "string"},
-                    "inverter_id": {"type": "string"},
+                    "timestamp": {
+                        "type": "string",
+                        "description": "Timestamp of the selected anomaly."
+                    }
                 },
                 "required": ["timestamp"],
                 "additionalProperties": False,
