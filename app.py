@@ -1191,6 +1191,46 @@ with kpi_cols[2]:
 
 if total_observations > 0 and total_anomalies == 0:
     st.caption("✅ No anomalies found in this period — everything looks normal.")
+# ============================================================
+# HEALTHY BASELINE
+# ============================================================
+
+if not baseline_df.empty:
+    # Overall healthy baseline
+    baseline_features = {
+        "dc_power_kw": "DC Power",
+        "inverter_temperature_c": "Temperature",
+    }
+
+    baseline_text = []
+
+    for feature, label in baseline_features.items():
+        median_col = f"{feature}_median"
+
+        if median_col in baseline_df.columns:
+            value = baseline_df[median_col].median()
+
+            if pd.notna(value):
+                unit = ""
+
+                if feature.endswith("_kw"):
+                    unit = " kW"
+                elif feature.endswith("_a"):
+                    unit = " A"
+                elif feature.endswith("_c"):
+                    unit = " °C"
+
+                baseline_text.append(
+                    f"{label} = {value:.1f}{unit}"
+                )
+
+    if baseline_text:
+        st.markdown("### Healthy Baseline")
+        st.caption(
+            "Typical healthy operating values from the healthy baseline."
+        )
+        st.markdown(" | ".join(baseline_text))
+        
 
 st.markdown("### Anomaly Score Over Time")
 st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
@@ -1230,49 +1270,6 @@ if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
 else:
     st.info("No anomaly score data available for the selected period.")
 
-# ============================================================
-# HEALTHY BASELINE
-# ============================================================
-
-if not baseline_df.empty:
-    # Overall healthy baseline
-    baseline_features = {
-        "dc_power_kw": "DC Power",
-        "ac_power_kw": "AC Power",
-        "dc_current_a": "DC Current",
-        "ac_current_a": "AC Current",
-        "inverter_temperature_c": "Temperature",
-    }
-
-    baseline_text = []
-
-    for feature, label in baseline_features.items():
-        median_col = f"{feature}_median"
-
-        if median_col in baseline_df.columns:
-            value = baseline_df[median_col].median()
-
-            if pd.notna(value):
-                unit = ""
-
-                if feature.endswith("_kw"):
-                    unit = " kW"
-                elif feature.endswith("_a"):
-                    unit = " A"
-                elif feature.endswith("_c"):
-                    unit = " °C"
-
-                baseline_text.append(
-                    f"{label} = {value:.1f}{unit}"
-                )
-
-    if baseline_text:
-        st.markdown("### Healthy Baseline")
-        st.caption(
-            "Typical healthy operating values from the healthy baseline."
-        )
-        st.markdown(" | ".join(baseline_text))
-        
 # ------------------------------------------------------------
 # TRENDS
 # ------------------------------------------------------------
