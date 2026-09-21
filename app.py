@@ -5,7 +5,6 @@ Production frontend only. All ML/training happens in inverter_anomaly.ipynb.
 
 Reads:
     dashboard_data.parquet  -> evaluation-period observations + model output
-    trend_data.parquet      -> full historical time series (pre-anomaly context)
 
 Does NOT retrain or re-run the notebook. Does NOT treat anomaly_score_ratio
 as a probability. Feature contributions are reported as "contributed most
