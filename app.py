@@ -134,6 +134,37 @@ st.markdown(
     font-size: 15px;
     font-weight: 600;
 }
+    .baseline-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin: 10px 0 20px 0;
+}
+
+.baseline-item {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+}
+
+.baseline-item-title {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 8px;
+}
+
+.baseline-item-value {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+@media (max-width: 900px) {
+    .baseline-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
     /* ---------- Headings ---------- */
     h2, [data-testid="stMarkdownContainer"] h2 {
         color: #0F172A;
@@ -1252,21 +1283,24 @@ if not baseline_df.empty:
                 baseline_text.append(
                     f"{label} = {low:.1f}–{high:.1f}{unit}"
                 )
-
-    st.markdown(
-    f"""
-    <div class="baseline-card">
-        <div class="baseline-title">Healthy Baseline</div>
-        <div class="baseline-subtitle">
-            Typical healthy operating range
+    st.markdown("### Healthy Baseline")
+    st.caption("Typical healthy operating range")
+    
+    cards_html = '<div class="baseline-grid">'
+    
+    for item in baseline_text:
+        label, value = item.split(" = ", 1)
+    
+        cards_html += f"""
+        <div class="baseline-item">
+            <div class="baseline-item-title">{label}</div>
+            <div class="baseline-item-value">{value}</div>
         </div>
-        <div class="baseline-values">
-            {" &nbsp; | &nbsp; ".join(baseline_text)}
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)        
+        """
+    
+    cards_html += "</div>"
+    
+    st.markdown(cards_html, unsafe_allow_html=True)     
 
 st.markdown("### Anomaly Score Over Time")
 st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
