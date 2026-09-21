@@ -1339,10 +1339,6 @@ if len(anomaly_df) > 0:
             '<div class="ai-title">AI Explanation</div>',
             unsafe_allow_html=True,
         )
-        st.markdown(
-            '<div class="ai-subtitle">A plain-language summary of what happened, when it happened, why it was flagged, and what to check.</div>',
-            unsafe_allow_html=True,
-        )
 
     with ai_button_col:
         regenerate = st.button(
@@ -1389,15 +1385,3 @@ else:
         "date range. Widen the date range or clear **Show anomalies only** "
         "to bring up more data."
     )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.divider()
-st.caption(
-    "Anomalies are flagged automatically based on unusual patterns in the "
-    "inverter's readings. A higher severity means the reading was further "
-    "outside the normal range."
-)
