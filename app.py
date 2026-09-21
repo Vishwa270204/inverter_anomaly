@@ -692,7 +692,7 @@ AI_TOOLS = [
                 "properties": {
                     "timestamp": {
                         "type": "string",
-                        "description": "Timestamp of the selected anomaly."
+                        "description": "Timestamp of the selected anomaly.",
                         "hours": {"type": "number"},
                     }
                 },
