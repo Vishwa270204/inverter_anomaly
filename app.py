@@ -1036,8 +1036,6 @@ with kpi_cols[1]:
     st.metric(
         "Anomalous Observations",
         f"{total_anomalies:,}",
-        delta=f"{anomaly_rate:.1f}% of total" if anomaly_rate is not None else None,
-        delta_color="inverse",
     )
 with kpi_cols[2]:
     st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
