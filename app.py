@@ -1182,7 +1182,7 @@ if len(anomaly_df) > 0:
         "anomaly_score_ratio",
         "anomaly_reason",
         "inverter_temperature_c",
-        "ac_power_kw",
+        "dc_power_kw",
     ]
     display_columns = [c for c in display_columns if c in anomaly_df.columns]
     friendly_names = {
@@ -1190,7 +1190,7 @@ if len(anomaly_df) > 0:
         "anomaly_score_ratio": "Severity",
         "anomaly_reason": "Anomaly Description",
         "inverter_temperature_c": "Inverter Temp (°C)",
-        "ac_power_kw": "AC Power (kW)",
+        "dc_power_kw": "DC Power (kW)",
     }
     table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
     st.dataframe(table, width="stretch", hide_index=True)
@@ -1241,13 +1241,13 @@ if len(anomaly_df) > 0:
 
         if len(trend_window) > 1:
             fig_trend = go.Figure()
-            if "ac_power_kw" in trend_window.columns:
+            if "dc_power_kw" in trend_window.columns:
                 fig_trend.add_trace(
                     go.Scatter(
                         x=trend_window["timestamp"],
                         y=trend_window["ac_power_kw"],
                         mode="lines",
-                        name="AC Power (kW)",
+                        name="DC Power (kW)",
                         yaxis="y",
                         line=dict(color="#4C78A8"),
                     )
