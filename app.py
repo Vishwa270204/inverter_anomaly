@@ -5,6 +5,7 @@ Production frontend only. All ML/training happens in inverter_anomaly.ipynb.
 
 Reads:
     dashboard_data.parquet  -> evaluation-period observations + model output
+    trend_data.parquet      -> full historical time series (pre-anomaly context)
 
 Does NOT retrain or re-run the notebook. Does NOT treat anomaly_score_ratio
 as a probability. Feature contributions are reported as "contributed most
@@ -14,7 +15,6 @@ to reconstruction error," never as a proven cause.
 import html
 import json
 import os
-import requests
 import re
 from datetime import datetime, timedelta
 
@@ -110,31 +110,7 @@ st.markdown(
         text-transform: uppercase;
         letter-spacing: 0.03em;
     }
-    .baseline-card {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 16px 20px;
-    margin: 10px 0 20px 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
 
-.baseline-title {
-    font-size: 18px;
-    font-weight: 700;
-    margin-bottom: 4px;
-}
-
-.baseline-subtitle {
-    font-size: 13px;
-    color: #64748b;
-    margin-bottom: 12px;
-}
-
-.baseline-values {
-    font-size: 15px;
-    font-weight: 600;
-}
     /* ---------- Headings ---------- */
     h2, [data-testid="stMarkdownContainer"] h2 {
         color: #0F172A;
@@ -326,6 +302,7 @@ def load_dashboard_data(path="dashboard_data.parquet"):
         df["anomaly_flag"] = False
     return df
 
+
 @st.cache_data
 def load_trend_data(path="trend_data.parquet"):
     df = pd.read_parquet(path)
@@ -333,30 +310,7 @@ def load_trend_data(path="trend_data.parquet"):
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     return df
 
-@st.cache_data
-def load_dashboard_baseline(path="dashboard_baseline.parquet"):
-    baseline = pd.read_parquet(path)
 
-    numeric_cols = [
-        c for c in baseline.columns
-        if c.endswith("_median")
-        or c.endswith("_q10")
-        or c.endswith("_q90")
-    ]
-
-    for col in numeric_cols:
-        baseline[col] = pd.to_numeric(
-            baseline[col],
-            errors="coerce"
-        )
-
-    if "healthy_sample_count" in baseline.columns:
-        baseline["healthy_sample_count"] = pd.to_numeric(
-            baseline["healthy_sample_count"],
-            errors="coerce"
-        )
-
-    return baseline
 def safe_load(loader, path, label):
     try:
         return loader(path)
@@ -372,11 +326,7 @@ def safe_load(loader, path, label):
 
 
 df = safe_load(load_dashboard_data, "dashboard_data.parquet", "Dashboard data")
-baseline_df = safe_load(
-    load_dashboard_baseline,
-    "dashboard_baseline.parquet",
-    "Dashboard healthy baseline",
-)
+
 if df.empty:
     st.error("`dashboard_data.parquet` loaded but contains no rows.")
     st.stop()
@@ -427,7 +377,7 @@ def get_contribution_cols(frame):
 
 
 @st.cache_resource
-def get_groq_client2():
+def get_groq_client():
     """Create one Groq client per Streamlit session/process."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -439,16 +389,6 @@ def get_groq_client2():
         return None
     return Groq(api_key=api_key)
 
-@st.cache_resource
-def get_openrouter_client():
-    """Return OpenRouter API configuration."""
-
-    api_key = "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"
-
-    return {
-        "api_key": api_key,
-        "url": "https://openrouter.ai/api/v1/chat/completions"
-    }
 
 # Controlled backend tools used by the AI analyst. The LLM can request
 # evidence, but it never gets arbitrary Python/database access.
@@ -581,98 +521,7 @@ def get_operating_context(timestamp, inverter_id=None):
         "communication_status_inv",
     ]
     return {k: clean_value(row.get(k)) for k in wanted if k in source.columns}
-def get_baseline_context(timestamp, inverter_id=None):
-    """
-    Retrieve healthy reference values for conditions similar to the
-    selected anomaly.
 
-    This is a comparison reference only. It does not establish cause.
-    """
-    target = pd.to_datetime(timestamp)
-
-    source = df.copy()
-
-    if inverter_id is not None and "inverter_id" in source.columns:
-        source = source[
-            source["inverter_id"].astype(str) == str(inverter_id)
-        ]
-
-    if source.empty:
-        return {"error": "No matching inverter data found."}
-
-    idx = (source["timestamp"] - target).abs().idxmin()
-    row = source.loc[idx]
-
-    conditions = {
-        "inverter_id": clean_value(row.get("inverter_id")),
-        "inverter_status": clean_value(row.get("inverter_status")),
-        "is_daylight": clean_value(row.get("is_daylight")),
-        "hour": clean_value(row.get("hour")),
-        "month": clean_value(row.get("month")),
-    }
-
-    baseline = baseline_df.copy()
-
-    # Match the most specific available healthy condition first.
-    match_cols = [
-        "inverter_id",
-        "inverter_status",
-        "is_daylight",
-        "hour",
-        "month",
-    ]
-
-    match_cols = [
-        c for c in match_cols
-        if c in baseline.columns and conditions.get(c) is not None
-    ]
-
-    matched = baseline.copy()
-
-    for col in match_cols:
-        matched = matched[
-            matched[col].astype(str) == str(conditions[col])
-        ]
-
-    if matched.empty:
-        return {
-            "error": "No healthy baseline group is available for the selected operating conditions.",
-            "conditions": conditions,
-        }
-
-    result = {
-        "conditions": conditions,
-        "healthy_sample_count": int(
-            matched["healthy_sample_count"].sum()
-        ),
-        "reference": {},
-    }
-
-    metric_names = sorted({
-        col[:-7]
-        for col in matched.columns
-        if col.endswith("_median")
-    })
-
-    for metric in metric_names:
-        median_col = f"{metric}_median"
-        q10_col = f"{metric}_q10"
-        q90_col = f"{metric}_q90"
-
-        values = matched[[median_col, q10_col, q90_col]].dropna(
-            how="all"
-        )
-
-        if values.empty:
-            continue
-
-        result["reference"][metric] = {
-            "median": clean_value(values[median_col].iloc[0]),
-            "typical_low_q10": clean_value(values[q10_col].iloc[0]),
-            "typical_high_q90": clean_value(values[q90_col].iloc[0]),
-        }
-
-    return result
 
 AI_TOOLS = [
     {
@@ -731,29 +580,6 @@ AI_TOOLS = [
             },
         },
     },
-        {
-        "type": "function",
-        "function": {
-            "name": "get_baseline_context",
-            "description": (
-                "Retrieve healthy operating reference values for the same "
-                "inverter and similar daylight, hour, month, and inverter "
-                "status conditions as the selected anomaly. Use these values "
-                "to determine whether anomaly readings are unusual compared "
-                "with healthy operation. This reference does not establish "
-                "cause or prove a fault."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "timestamp": {"type": "string"},
-                    "inverter_id": {"type": "string"},
-                },
-                "required": ["timestamp"],
-                "additionalProperties": False,
-            },
-        },
-    },
 ]
 
 
@@ -766,15 +592,11 @@ def execute_ai_tool(name, args):
         return get_feature_contributions(**args)
     if name == "get_operating_context":
         return get_operating_context(**args)
-    if name == "get_baseline_context":
-        return get_baseline_context(**args)
     return {"error": f"Unknown tool: {name}"}
 
 
 def generate_ai_explanation(selected_anomaly):
-    #client = get_groq_client()
-    client = get_openrouter_client()
-
+    client = get_groq_client()
     if client is None:
         raise RuntimeError(
             "GROQ_API_KEY is not configured. Add [groq] api_key to Streamlit Cloud Secrets."
@@ -785,83 +607,73 @@ def generate_ai_explanation(selected_anomaly):
         if "inverter_id" in selected_anomaly.index
         else None
     )
-
-
     evidence = {}
     system_prompt = """You are an assistant that explains inverter anomalies to a normal \
-    dashboard user (not a technical or ML user), using only evidence returned by tools.
+dashboard user (not a technical or ML user), using only evidence returned by tools.
 
-    TOOL USE- Before writing your final answer, call the available tools -- get_anomaly_details,
-    get_pre_anomaly_trend, get_feature_contributions, get_operating_context, and
-    get_baseline_context -- for the given timestamp and inverter_id, to gather the
-    anomaly's operating status, daylight/time-of-day context, power and current values,
-    inverter and ambient temperature, efficiency, power factor, frequency,
-    communication/quality info, feature contributions, anomaly reason, the 24-hour
-    pre-anomaly trend, and healthy reference values under similar operating
-    conditions. Use the healthy baseline to compare the anomaly's actual readings
-    with normal healthy values for those conditions. Do not rely only on the
-    timestamp/inverter_id given to you -- use the tools to gather this evidence yourself.
-    - Never invent, estimate, or assume a value that was not returned by a tool. If a tool \
-    returns an error or is missing data, work only with what is available.
-    - If the remaining evidence is not enough to explain why the anomaly happened, say exactly: \
-    "The available data is not sufficient to determine the exact reason." Do not guess.
+TOOL USE
+- Before writing your final answer, call the available tools -- get_anomaly_details, \
+get_pre_anomaly_trend, get_feature_contributions, get_operating_context -- for the given \
+timestamp and inverter_id, to gather the anomaly's operating status, daylight/time-of-day \
+context, power and current values, inverter and ambient temperature, efficiency, power \
+factor, frequency, communication/quality info, feature contributions, anomaly reason, and \
+the 24-hour pre-anomaly trend. Do not rely only on the timestamp/inverter_id given to you --
+use the tools to gather this evidence yourself.
+- Never invent, estimate, or assume a value that was not returned by a tool. If a tool \
+returns an error or is missing data, work only with what is available.
+- If the remaining evidence is not enough to explain why the anomaly happened, say exactly: \
+"The available data is not sufficient to determine the exact reason." Do not guess.
 
-    CAUSALITY RULES (critical)
-    - A feature's contribution means it was one of the readings that stood out as unusual in \
-    the anomaly evidence. It does NOT mean that feature caused the anomaly, and it does NOT mean \
-    a component failed. Never state or imply a root cause (e.g. never say "high temperature \
-    caused the anomaly" or "the cooling system failed").
-    - Instead, describe a contributing parameter as something that stood out, and offer a \
-    practical check rather than a diagnosis, e.g. "Temperature was one of the parameters that \
-    contributed strongly to the unusual pattern" and "Cooling performance should be checked if \
-    this pattern persists."
-    - Keep observed fact, possible explanation, and recommended check clearly separate -- do not \
-    blur them into a single causal claim.
-    - The healthy baseline is a comparison reference only. It shows whether a
-    reading is unusual compared with healthy operation under similar conditions.
-    It does not prove why the anomaly occurred, identify a failed component, or
-    establish a root cause.
+CAUSALITY RULES (critical)
+- A feature's contribution means it was one of the readings that stood out as unusual in \
+the anomaly evidence. It does NOT mean that feature caused the anomaly, and it does NOT mean \
+a component failed. Never state or imply a root cause (e.g. never say "high temperature \
+caused the anomaly" or "the cooling system failed").
+- Instead, describe a contributing parameter as something that stood out, and offer a \
+practical check rather than a diagnosis, e.g. "Temperature was one of the parameters that \
+contributed strongly to the unusual pattern" and "Cooling performance should be checked if \
+this pattern persists."
+- Keep observed fact, possible explanation, and recommended check clearly separate -- do not \
+blur them into a single causal claim.
 
-    NORMAL-OPERATING-CONDITIONS RULE
-    - Before calling anything unusual, consider is_daylight, hour, month,
-    inverter_status, power level, ambient temperature, the healthy baseline under
-    similar conditions, and the normal pre-anomaly trend from the tools.
-    - A value should be described as unusual when it differs materially from the
-    healthy reference for comparable operating conditions. Do not call a change
-    abnormal merely because it is higher than at an earlier time.
-    - The healthy baseline is evidence of what healthy operation normally looked
-    like under similar conditions; it is not evidence of the cause of the anomaly.
+NORMAL-OPERATING-CONDITIONS RULE
+- Before calling anything unusual, consider is_daylight, hour, inverter_status, power level, \
+ambient temperature, and the normal pre-anomaly trend from the tools.
+- Do not call a change abnormal just because a value is higher than at an earlier time. For \
+example, a temperature rise around midday alongside a normal rise in ambient temperature and \
+power output is not automatically unusual -- say so plainly rather than flagging it as \
+abnormal when it looks consistent with normal operation.
 
-    LANGUAGE RULES
-    - Use simple, plain, professional language.
-    - Never mention: autoencoder, reconstruction error, EVT, POT, anomaly_score_ratio, threshold, \
-    feature contribution percentage, model score, confidence score, probability, or any other ML \
-    model internals.
-    - Never say things like "the model predicts with X% confidence", "the probability of failure \
-    is...", "the root cause is...", "the ML model determined that...", or "the autoencoder \
-    detected...".
-    - Prefer phrasing like: "The inverter showed unusual behavior...", "The main parameter \
-    contributing to the unusual pattern was...", "Before the anomaly, AC power decreased \
-    while...", "This should be checked...", "The available data does not confirm the exact \
-    cause."
+LANGUAGE RULES
+- Use simple, plain, professional language.
+- Never mention: autoencoder, reconstruction error, EVT, POT, anomaly_score_ratio, threshold, \
+feature contribution percentage, model score, confidence score, probability, or any other ML \
+model internals.
+- Never say things like "the model predicts with X% confidence", "the probability of failure \
+is...", "the root cause is...", "the ML model determined that...", or "the autoencoder \
+detected...".
+- Prefer phrasing like: "The inverter showed unusual behavior...", "The main parameter \
+contributing to the unusual pattern was...", "Before the anomaly, AC power decreased \
+while...", "This should be checked...", "The available data does not confirm the exact \
+cause."
 
-    OUTPUT FORMAT
-    Return ONE single paragraph only.
+OUTPUT FORMAT
+Return ONE single paragraph only.
 
-    The paragraph must naturally include:
-    - what happened
-    - when it happened
-    - why it was flagged
-    - what should be checked
+The paragraph must naturally include:
+- what happened
+- when it happened
+- why it was flagged
+- what should be checked
 
-    Do NOT use headings.
-    Do NOT use bullet points.
-    Do NOT use numbered lists.
-    Do NOT use Markdown or bold markers.
-    Do NOT use labels such as "What happened:", "When:", "Why it was flagged:", or "What to check:".
+Do NOT use headings.
+Do NOT use bullet points.
+Do NOT use numbered lists.
+Do NOT use Markdown or bold markers.
+Do NOT use labels such as "What happened:", "When:", "Why it was flagged:", or "What to check:".
 
-    Write 4-6 concise sentences in plain, professional language. Keep the entire response under about 110 words. Do not add any other sections or ML terminology.
-    """
+Write 4-6 concise sentences in plain, professional language. Keep the entire response under about 110 words. Do not add any other sections or ML terminology.
+"""
     messages = [
         {"role": "system", "content": system_prompt},
         {
@@ -880,107 +692,48 @@ def generate_ai_explanation(selected_anomaly):
         },
     ]
 
-    # for _ in range(6):
-    #     response = client.chat.completions.create(
-    #         model="llama-3.1-8b-instant",
-    #         messages=messages,
-    #         tools=AI_TOOLS,
-    #         tool_choice="auto",
-    #         temperature=0.2,
-    #     )
-    #     msg = response.choices[0].message
-
-    #     if not msg.tool_calls:
-    #         return msg.content, evidence
-
-    #     messages.append(
-    #         {
-    #             "role": "assistant",
-    #             "content": msg.content or "",
-    #             "tool_calls": [
-    #                 {
-    #                     "id": tc.id,
-    #                     "type": "function",
-    #                     "function": {
-    #                         "name": tc.function.name,
-    #                         "arguments": tc.function.arguments,
-    #                     },
-    #                 }
-    #                 for tc in msg.tool_calls
-    #             ],
-    #         }
-    #     )
-
-    #     for tc in msg.tool_calls:
-    #         try:
-    #             args = json.loads(tc.function.arguments)
-    #         except Exception:
-    #             args = {}
-    #         result = execute_ai_tool(tc.function.name, args)
-    #         evidence[tc.function.name] = result
-    #         messages.append(
-    #             {
-    #                 "role": "tool",
-    #                 "tool_call_id": tc.id,
-    #                 "content": json.dumps(result, default=str),
-    #             }
-    #         )
-
     for _ in range(6):
-
-        headers = {
-            "Authorization": f"Bearer {client['api_key']}",
-            "Content-Type": "application/json",
-        }
-
-        payload = {
-            "model": "nvidia/nemotron-3.5-lightning:free",
-            "messages": messages,
-            "tools": AI_TOOLS,
-            "tool_choice": "auto",
-            "temperature": 0.2,
-        }
-
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=60,
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=messages,
+            tools=AI_TOOLS,
+            tool_choice="auto",
+            temperature=0.2,
         )
+        msg = response.choices[0].message
 
-        response.raise_for_status()
-
-        data = response.json()
-        msg = data["choices"][0]["message"]
-
-        if not msg.get("tool_calls"):
-            return msg.get("content", ""), evidence
+        if not msg.tool_calls:
+            return msg.content, evidence
 
         messages.append(
             {
                 "role": "assistant",
-                "content": msg.get("content") or "",
-                "tool_calls": msg["tool_calls"],
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
             }
         )
 
-        for tc in msg["tool_calls"]:
+        for tc in msg.tool_calls:
             try:
-                args = json.loads(tc["function"]["arguments"])
+                args = json.loads(tc.function.arguments)
             except Exception:
                 args = {}
-
-            result = execute_ai_tool(
-                tc["function"]["name"],
-                args
-            )
-
-            evidence[tc["function"]["name"]] = result
-
+            result = execute_ai_tool(tc.function.name, args)
+            evidence[tc.function.name] = result
             messages.append(
                 {
                     "role": "tool",
-                    "tool_call_id": tc["id"],
+                    "tool_call_id": tc.id,
                     "content": json.dumps(result, default=str),
                 }
             )
@@ -1283,63 +1036,20 @@ with kpi_cols[1]:
     st.metric(
         "Anomalous Observations",
         f"{total_anomalies:,}",
+        delta=f"{anomaly_rate:.1f}% of total" if anomaly_rate is not None else None,
+        delta_color="inverse",
     )
 with kpi_cols[2]:
     st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
+with kpi_cols[3]:
+    if "inverter_temperature_c" in filtered_df.columns:
+        st.metric("Max Inverter Temperature", fmt_num(max_temperature, 1, " °C"))
+    else:
+        st.metric("Max Inverter Temperature", "—")
 
 if total_observations > 0 and total_anomalies == 0:
     st.caption("✅ No anomalies found in this period — everything looks normal.")
-# ============================================================
-# HEALTHY BASELINE
-# ============================================================
 
-if not baseline_df.empty:
-
-    baseline_features = {
-        "dc_power_kw": "DC Power",
-        "inverter_temperature_c": "Temperature",
-    }
-
-    baseline_text = []
-
-    for feature, label in baseline_features.items():
-
-        q10_col = f"{feature}_q10"
-        q90_col = f"{feature}_q90"
-
-        if q10_col in baseline_df.columns and q90_col in baseline_df.columns:
-
-            low = baseline_df[q10_col].median()
-            high = baseline_df[q90_col].median()
-
-            if pd.notna(low) and pd.notna(high):
-
-                if feature.endswith("_kw"):
-                    unit = " kW"
-                elif feature.endswith("_a"):
-                    unit = " A"
-                elif feature.endswith("_c"):
-                    unit = " °C"
-                else:
-                    unit = ""
-
-            baseline_text.append(
-                f"{label} = {low:.1f}–{high:.1f}{unit}"
-            )
-
-st.markdown("### Healthy Baseline")
-st.caption("Typical healthy operating range")
-
-baseline_cols = st.columns(4)
-
-for i, item in enumerate(baseline_text):
-    label, value = item.split(" = ", 1)
-
-    with baseline_cols[i]:
-        st.metric(
-            label=label,
-            value=value
-        )
 st.markdown("### Anomaly Score Over Time")
 st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
 
@@ -1477,15 +1187,17 @@ if len(anomaly_df) > 0:
     display_columns = [
         "timestamp",
         "anomaly_score_ratio",
+        "anomaly_reason",
         "inverter_temperature_c",
-        "dc_power_kw",
+        "ac_power_kw",
     ]
     display_columns = [c for c in display_columns if c in anomaly_df.columns]
     friendly_names = {
         "timestamp": "Time",
         "anomaly_score_ratio": "Severity",
+        "anomaly_reason": "Anomaly Description",
         "inverter_temperature_c": "Inverter Temp (°C)",
-        "dc_power_kw": "DC Power (kW)",
+        "ac_power_kw": "AC Power (kW)",
     }
     table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
     st.dataframe(table, width="stretch", hide_index=True)
@@ -1536,13 +1248,13 @@ if len(anomaly_df) > 0:
 
         if len(trend_window) > 1:
             fig_trend = go.Figure()
-            if "dc_power_kw" in trend_window.columns:
+            if "ac_power_kw" in trend_window.columns:
                 fig_trend.add_trace(
                     go.Scatter(
                         x=trend_window["timestamp"],
                         y=trend_window["ac_power_kw"],
                         mode="lines",
-                        name="DC Power (kW)",
+                        name="AC Power (kW)",
                         yaxis="y",
                         line=dict(color="#4C78A8"),
                     )
@@ -1627,6 +1339,10 @@ if len(anomaly_df) > 0:
             '<div class="ai-title">AI Explanation</div>',
             unsafe_allow_html=True,
         )
+        st.markdown(
+            '<div class="ai-subtitle">A plain-language summary of what happened, when it happened, why it was flagged, and what to check.</div>',
+            unsafe_allow_html=True,
+        )
 
     with ai_button_col:
         regenerate = st.button(
@@ -1655,11 +1371,10 @@ if len(anomaly_df) > 0:
                     "error": None,
                 }
             except Exception as e:
-                import traceback
                 cached = {
                     "explanation": None,
                     "evidence": None,
-                    "error": str(traceback.print_exc()),
+                    "error": str(e),
                 }
             st.session_state["ai_explanations"][anomaly_key] = cached
 
@@ -1674,3 +1389,5 @@ else:
         "date range. Widen the date range or clear **Show anomalies only** "
         "to bring up more data."
     )
+
+
