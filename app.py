@@ -928,7 +928,7 @@ def generate_ai_explanation(selected_anomaly):
     for _ in range(6):
 
         headers = {
-            "Authorization": f"Bearer {client.api_key}",
+            "Authorization": f"Bearer {client['api_key']}",
             "Content-Type": "application/json",
         }
 
