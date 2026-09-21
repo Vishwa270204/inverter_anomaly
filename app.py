@@ -1249,9 +1249,9 @@ if not baseline_df.empty:
                 else:
                     unit = ""
 
-    baseline_text.append(
-        f"{label} = {low:.1f}–{high:.1f}{unit}"
-    )
+            baseline_text.append(
+                f"{label} = {low:.1f}–{high:.1f}{unit}"
+            )
 
 st.markdown("### Healthy Baseline")
 st.caption("Typical healthy operating range")
