@@ -2,4 +2,4 @@
 pandas
 pyarrow
 plotly
-groq
+openai
