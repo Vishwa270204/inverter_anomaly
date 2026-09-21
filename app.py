@@ -14,7 +14,6 @@ to reconstruction error," never as a proven cause.
 import html
 import json
 import os
-import requests
 import re
 from datetime import datetime, timedelta
 
@@ -444,15 +443,6 @@ def get_openrouter_client():
     """Return OpenRouter API configuration."""
 
     api_key = "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"
-
-    if not api_key:
-        try:
-            api_key = st.secrets["openrouter"]["api_key"]
-        except Exception:
-            api_key = None
-
-    if not api_key:
-        return None
 
     return {
         "api_key": api_key,
@@ -938,7 +928,7 @@ def generate_ai_explanation(selected_anomaly):
     for _ in range(6):
 
         headers = {
-            "Authorization": f"Bearer {client}",
+            "Authorization": f"Bearer {client.api_key}",
             "Content-Type": "application/json",
         }
 
