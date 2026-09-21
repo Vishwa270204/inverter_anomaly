@@ -109,7 +109,31 @@ st.markdown(
         text-transform: uppercase;
         letter-spacing: 0.03em;
     }
+    .baseline-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 10px 0 20px 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
 
+.baseline-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.baseline-subtitle {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 12px;
+}
+
+.baseline-values {
+    font-size: 15px;
+    font-weight: 600;
+}
     /* ---------- Headings ---------- */
     h2, [data-testid="stMarkdownContainer"] h2 {
         color: #0F172A;
@@ -1229,12 +1253,20 @@ if not baseline_df.empty:
                     f"{label} = {low:.1f}–{high:.1f}{unit}"
                 )
 
-    if baseline_text:
-        st.markdown("### Healthy Baseline")
-        st.caption(
-            "Typical healthy operating range under the baseline conditions."
-        )
-        st.markdown(" | ".join(baseline_text))        
+    st.markdown(
+    f"""
+    <div class="baseline-card">
+        <div class="baseline-title">Healthy Baseline</div>
+        <div class="baseline-subtitle">
+            Typical healthy operating range
+        </div>
+        <div class="baseline-values">
+            {" &nbsp; | &nbsp; ".join(baseline_text)}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)        
 
 st.markdown("### Anomaly Score Over Time")
 st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
