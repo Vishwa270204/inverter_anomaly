@@ -1039,11 +1039,6 @@ with kpi_cols[1]:
     )
 with kpi_cols[2]:
     st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
-with kpi_cols[3]:
-    if "inverter_temperature_c" in filtered_df.columns:
-        st.metric("Max Inverter Temperature", fmt_num(max_temperature, 1, " °C"))
-    else:
-        st.metric("Max Inverter Temperature", "—")
 
 if total_observations > 0 and total_anomalies == 0:
     st.caption("✅ No anomalies found in this period — everything looks normal.")
