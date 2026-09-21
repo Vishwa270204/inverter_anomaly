@@ -5,7 +5,6 @@ Production frontend only. All ML/training happens in inverter_anomaly.ipynb.
 
 Reads:
     dashboard_data.parquet  -> evaluation-period observations + model output
-    trend_data.parquet      -> full historical time series (pre-anomaly context)
 
 Does NOT retrain or re-run the notebook. Does NOT treat anomaly_score_ratio
 as a probability. Feature contributions are reported as "contributed most
@@ -110,7 +109,31 @@ st.markdown(
         text-transform: uppercase;
         letter-spacing: 0.03em;
     }
+    .baseline-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 10px 0 20px 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
 
+.baseline-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.baseline-subtitle {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 12px;
+}
+
+.baseline-values {
+    font-size: 15px;
+    font-weight: 600;
+}
     /* ---------- Headings ---------- */
     h2, [data-testid="stMarkdownContainer"] h2 {
         color: #0F172A;
@@ -302,7 +325,6 @@ def load_dashboard_data(path="dashboard_data.parquet"):
         df["anomaly_flag"] = False
     return df
 
-
 @st.cache_data
 def load_trend_data(path="trend_data.parquet"):
     df = pd.read_parquet(path)
@@ -310,7 +332,30 @@ def load_trend_data(path="trend_data.parquet"):
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     return df
 
+@st.cache_data
+def load_dashboard_baseline(path="dashboard_baseline.parquet"):
+    baseline = pd.read_parquet(path)
 
+    numeric_cols = [
+        c for c in baseline.columns
+        if c.endswith("_median")
+        or c.endswith("_q10")
+        or c.endswith("_q90")
+    ]
+
+    for col in numeric_cols:
+        baseline[col] = pd.to_numeric(
+            baseline[col],
+            errors="coerce"
+        )
+
+    if "healthy_sample_count" in baseline.columns:
+        baseline["healthy_sample_count"] = pd.to_numeric(
+            baseline["healthy_sample_count"],
+            errors="coerce"
+        )
+
+    return baseline
 def safe_load(loader, path, label):
     try:
         return loader(path)
@@ -326,7 +371,11 @@ def safe_load(loader, path, label):
 
 
 df = safe_load(load_dashboard_data, "dashboard_data.parquet", "Dashboard data")
-
+baseline_df = safe_load(
+    load_dashboard_baseline,
+    "dashboard_baseline.parquet",
+    "Dashboard healthy baseline",
+)
 if df.empty:
     st.error("`dashboard_data.parquet` loaded but contains no rows.")
     st.stop()
@@ -521,7 +570,98 @@ def get_operating_context(timestamp, inverter_id=None):
         "communication_status_inv",
     ]
     return {k: clean_value(row.get(k)) for k in wanted if k in source.columns}
+def get_baseline_context(timestamp, inverter_id=None):
+    """
+    Retrieve healthy reference values for conditions similar to the
+    selected anomaly.
 
+    This is a comparison reference only. It does not establish cause.
+    """
+    target = pd.to_datetime(timestamp)
+
+    source = df.copy()
+
+    if inverter_id is not None and "inverter_id" in source.columns:
+        source = source[
+            source["inverter_id"].astype(str) == str(inverter_id)
+        ]
+
+    if source.empty:
+        return {"error": "No matching inverter data found."}
+
+    idx = (source["timestamp"] - target).abs().idxmin()
+    row = source.loc[idx]
+
+    conditions = {
+        "inverter_id": clean_value(row.get("inverter_id")),
+        "inverter_status": clean_value(row.get("inverter_status")),
+        "is_daylight": clean_value(row.get("is_daylight")),
+        "hour": clean_value(row.get("hour")),
+        "month": clean_value(row.get("month")),
+    }
+
+    baseline = baseline_df.copy()
+
+    # Match the most specific available healthy condition first.
+    match_cols = [
+        "inverter_id",
+        "inverter_status",
+        "is_daylight",
+        "hour",
+        "month",
+    ]
+
+    match_cols = [
+        c for c in match_cols
+        if c in baseline.columns and conditions.get(c) is not None
+    ]
+
+    matched = baseline.copy()
+
+    for col in match_cols:
+        matched = matched[
+            matched[col].astype(str) == str(conditions[col])
+        ]
+
+    if matched.empty:
+        return {
+            "error": "No healthy baseline group is available for the selected operating conditions.",
+            "conditions": conditions,
+        }
+
+    result = {
+        "conditions": conditions,
+        "healthy_sample_count": int(
+            matched["healthy_sample_count"].sum()
+        ),
+        "reference": {},
+    }
+
+    metric_names = sorted({
+        col[:-7]
+        for col in matched.columns
+        if col.endswith("_median")
+    })
+
+    for metric in metric_names:
+        median_col = f"{metric}_median"
+        q10_col = f"{metric}_q10"
+        q90_col = f"{metric}_q90"
+
+        values = matched[[median_col, q10_col, q90_col]].dropna(
+            how="all"
+        )
+
+        if values.empty:
+            continue
+
+        result["reference"][metric] = {
+            "median": clean_value(values[median_col].iloc[0]),
+            "typical_low_q10": clean_value(values[q10_col].iloc[0]),
+            "typical_high_q90": clean_value(values[q90_col].iloc[0]),
+        }
+
+    return result
 
 AI_TOOLS = [
     {
@@ -580,6 +720,29 @@ AI_TOOLS = [
             },
         },
     },
+        {
+        "type": "function",
+        "function": {
+            "name": "get_baseline_context",
+            "description": (
+                "Retrieve healthy operating reference values for the same "
+                "inverter and similar daylight, hour, month, and inverter "
+                "status conditions as the selected anomaly. Use these values "
+                "to determine whether anomaly readings are unusual compared "
+                "with healthy operation. This reference does not establish "
+                "cause or prove a fault."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "timestamp": {"type": "string"},
+                    "inverter_id": {"type": "string"},
+                },
+                "required": ["timestamp"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -592,6 +755,8 @@ def execute_ai_tool(name, args):
         return get_feature_contributions(**args)
     if name == "get_operating_context":
         return get_operating_context(**args)
+    if name == "get_baseline_context":
+        return get_baseline_context(**args)
     return {"error": f"Unknown tool: {name}"}
 
 
@@ -611,14 +776,16 @@ def generate_ai_explanation(selected_anomaly):
     system_prompt = """You are an assistant that explains inverter anomalies to a normal \
 dashboard user (not a technical or ML user), using only evidence returned by tools.
 
-TOOL USE
-- Before writing your final answer, call the available tools -- get_anomaly_details, \
-get_pre_anomaly_trend, get_feature_contributions, get_operating_context -- for the given \
-timestamp and inverter_id, to gather the anomaly's operating status, daylight/time-of-day \
-context, power and current values, inverter and ambient temperature, efficiency, power \
-factor, frequency, communication/quality info, feature contributions, anomaly reason, and \
-the 24-hour pre-anomaly trend. Do not rely only on the timestamp/inverter_id given to you --
-use the tools to gather this evidence yourself.
+TOOL USE- Before writing your final answer, call the available tools -- get_anomaly_details,
+get_pre_anomaly_trend, get_feature_contributions, get_operating_context, and
+get_baseline_context -- for the given timestamp and inverter_id, to gather the
+anomaly's operating status, daylight/time-of-day context, power and current values,
+inverter and ambient temperature, efficiency, power factor, frequency,
+communication/quality info, feature contributions, anomaly reason, the 24-hour
+pre-anomaly trend, and healthy reference values under similar operating
+conditions. Use the healthy baseline to compare the anomaly's actual readings
+with normal healthy values for those conditions. Do not rely only on the
+timestamp/inverter_id given to you -- use the tools to gather this evidence yourself.
 - Never invent, estimate, or assume a value that was not returned by a tool. If a tool \
 returns an error or is missing data, work only with what is available.
 - If the remaining evidence is not enough to explain why the anomaly happened, say exactly: \
@@ -635,14 +802,20 @@ contributed strongly to the unusual pattern" and "Cooling performance should be 
 this pattern persists."
 - Keep observed fact, possible explanation, and recommended check clearly separate -- do not \
 blur them into a single causal claim.
+- The healthy baseline is a comparison reference only. It shows whether a
+reading is unusual compared with healthy operation under similar conditions.
+It does not prove why the anomaly occurred, identify a failed component, or
+establish a root cause.
 
 NORMAL-OPERATING-CONDITIONS RULE
-- Before calling anything unusual, consider is_daylight, hour, inverter_status, power level, \
-ambient temperature, and the normal pre-anomaly trend from the tools.
-- Do not call a change abnormal just because a value is higher than at an earlier time. For \
-example, a temperature rise around midday alongside a normal rise in ambient temperature and \
-power output is not automatically unusual -- say so plainly rather than flagging it as \
-abnormal when it looks consistent with normal operation.
+- Before calling anything unusual, consider is_daylight, hour, month,
+inverter_status, power level, ambient temperature, the healthy baseline under
+similar conditions, and the normal pre-anomaly trend from the tools.
+- A value should be described as unusual when it differs materially from the
+healthy reference for comparable operating conditions. Do not call a change
+abnormal merely because it is higher than at an earlier time.
+- The healthy baseline is evidence of what healthy operation normally looked
+like under similar conditions; it is not evidence of the cause of the anomaly.
 
 LANGUAGE RULES
 - Use simple, plain, professional language.
@@ -694,7 +867,7 @@ Write 4-6 concise sentences in plain, professional language. Keep the entire res
 
     for _ in range(6):
         response = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+            model="llama-3.1-8b-instant",
             messages=messages,
             tools=AI_TOOLS,
             tool_choice="auto",
@@ -1036,20 +1209,63 @@ with kpi_cols[1]:
     st.metric(
         "Anomalous Observations",
         f"{total_anomalies:,}",
-        delta=f"{anomaly_rate:.1f}% of total" if anomaly_rate is not None else None,
-        delta_color="inverse",
     )
 with kpi_cols[2]:
     st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
-with kpi_cols[3]:
-    if "inverter_temperature_c" in filtered_df.columns:
-        st.metric("Max Inverter Temperature", fmt_num(max_temperature, 1, " °C"))
-    else:
-        st.metric("Max Inverter Temperature", "—")
 
 if total_observations > 0 and total_anomalies == 0:
     st.caption("✅ No anomalies found in this period — everything looks normal.")
+# ============================================================
+# HEALTHY BASELINE
+# ============================================================
 
+if not baseline_df.empty:
+
+    baseline_features = {
+        "dc_power_kw": "DC Power",
+        "inverter_temperature_c": "Temperature",
+    }
+
+    baseline_text = []
+
+    for feature, label in baseline_features.items():
+
+        q10_col = f"{feature}_q10"
+        q90_col = f"{feature}_q90"
+
+        if q10_col in baseline_df.columns and q90_col in baseline_df.columns:
+
+            low = baseline_df[q10_col].median()
+            high = baseline_df[q90_col].median()
+
+            if pd.notna(low) and pd.notna(high):
+
+                if feature.endswith("_kw"):
+                    unit = " kW"
+                elif feature.endswith("_a"):
+                    unit = " A"
+                elif feature.endswith("_c"):
+                    unit = " °C"
+                else:
+                    unit = ""
+
+            baseline_text.append(
+                f"{label} = {low:.1f}–{high:.1f}{unit}"
+            )
+
+st.markdown("### Healthy Baseline")
+st.caption("Typical healthy operating range")
+
+baseline_cols = st.columns(4)
+
+for i, item in enumerate(baseline_text):
+    label, value = item.split(" = ", 1)
+
+    with baseline_cols[i]:
+        st.metric(
+            label=label,
+            value=value
+        )
 st.markdown("### Anomaly Score Over Time")
 st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
 
@@ -1187,17 +1403,15 @@ if len(anomaly_df) > 0:
     display_columns = [
         "timestamp",
         "anomaly_score_ratio",
-        "anomaly_reason",
         "inverter_temperature_c",
-        "ac_power_kw",
+        "dc_power_kw",
     ]
     display_columns = [c for c in display_columns if c in anomaly_df.columns]
     friendly_names = {
         "timestamp": "Time",
         "anomaly_score_ratio": "Severity",
-        "anomaly_reason": "Anomaly Description",
         "inverter_temperature_c": "Inverter Temp (°C)",
-        "ac_power_kw": "AC Power (kW)",
+        "dc_power_kw": "DC Power (kW)",
     }
     table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
     st.dataframe(table, width="stretch", hide_index=True)
@@ -1248,13 +1462,13 @@ if len(anomaly_df) > 0:
 
         if len(trend_window) > 1:
             fig_trend = go.Figure()
-            if "ac_power_kw" in trend_window.columns:
+            if "dc_power_kw" in trend_window.columns:
                 fig_trend.add_trace(
                     go.Scatter(
                         x=trend_window["timestamp"],
                         y=trend_window["ac_power_kw"],
                         mode="lines",
-                        name="AC Power (kW)",
+                        name="DC Power (kW)",
                         yaxis="y",
                         line=dict(color="#4C78A8"),
                     )
@@ -1339,10 +1553,6 @@ if len(anomaly_df) > 0:
             '<div class="ai-title">AI Explanation</div>',
             unsafe_allow_html=True,
         )
-        st.markdown(
-            '<div class="ai-subtitle">A plain-language summary of what happened, when it happened, why it was flagged, and what to check.</div>',
-            unsafe_allow_html=True,
-        )
 
     with ai_button_col:
         regenerate = st.button(
@@ -1389,10 +1599,3 @@ else:
         "date range. Widen the date range or clear **Show anomalies only** "
         "to bring up more data."
     )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.divider()
