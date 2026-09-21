@@ -1373,7 +1373,6 @@ if len(anomaly_df) > 0:
     display_columns = [
         "timestamp",
         "anomaly_score_ratio",
-        "top_contributing_feature",
         "inverter_temperature_c",
         "dc_power_kw",
     ]
@@ -1381,7 +1380,6 @@ if len(anomaly_df) > 0:
     friendly_names = {
         "timestamp": "Time",
         "anomaly_score_ratio": "Severity",
-        "top_contributing_feature": "Anomaly Reason",
         "inverter_temperature_c": "Inverter Temp (°C)",
         "dc_power_kw": "DC Power (kW)",
     }
