@@ -668,16 +668,13 @@ AI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_anomaly_details",
-            "description": "Retrieve the selected anomaly observation and model outputs.",
+            "description": (
+                "Retrieve the selected anomaly observation and model outputs "
+                "for the anomaly selected by the dashboard user."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "timestamp": {
-                        "type": "string",
-                        "description": "Timestamp of the selected anomaly."
-                    }
-                },
-                "required": ["timestamp"],
+                "properties": {},
                 "additionalProperties": False,
             },
         },
@@ -686,17 +683,13 @@ AI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_pre_anomaly_trend",
-            "description": "Retrieve descriptive statistics for the 24 hours before the selected anomaly.",
+            "description": (
+                "Retrieve descriptive statistics for the 24 hours before "
+                "the anomaly selected by the dashboard user."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "timestamp": {
-                        "type": "string",
-                        "description": "Timestamp of the selected anomaly.",
-                        "hours": {"type": "number"},
-                    }
-                },
-                "required": ["timestamp"],
+                "properties": {},
                 "additionalProperties": False,
             },
         },
@@ -705,16 +698,13 @@ AI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_feature_contributions",
-            "description": "Retrieve feature contributions to reconstruction error for the selected anomaly.",
+            "description": (
+                "Retrieve the parameters that contributed most to the "
+                "unusual pattern at the anomaly selected by the dashboard user."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "timestamp": {
-                        "type": "string",
-                        "description": "Timestamp of the selected anomaly."
-                    }
-                },
-                "required": ["timestamp"],
+                "properties": {},
                 "additionalProperties": False,
             },
         },
@@ -723,59 +713,52 @@ AI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_operating_context",
-            "description": "Retrieve daylight, status, power, environmental, and communication context at the selected anomaly.",
+            "description": (
+                "Retrieve daylight, status, power, environmental, "
+                "and communication context for the anomaly selected "
+                "by the dashboard user."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "timestamp": {
-                        "type": "string",
-                        "description": "Timestamp of the selected anomaly."
-                    }
-                },
-                "required": ["timestamp"],
+                "properties": {},
                 "additionalProperties": False,
             },
         },
     },
-        {
+    {
         "type": "function",
         "function": {
             "name": "get_baseline_context",
             "description": (
-                "Retrieve healthy operating reference values for the same "
-                "inverter and similar daylight, hour, month, and inverter "
-                "status conditions as the selected anomaly. Use these values "
-                "to determine whether anomaly readings are unusual compared "
-                "with healthy operation. This reference does not establish "
-                "cause or prove a fault."
+                "Retrieve healthy reference values for operating conditions "
+                "similar to the anomaly selected by the dashboard user. "
+                "This is a comparison reference only and does not establish cause."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "timestamp": {
-                        "type": "string",
-                        "description": "Timestamp of the selected anomaly."
-                    }
-                },
-                "required": ["timestamp"],
+                "properties": {},
                 "additionalProperties": False,
             },
         },
     },
 ]
 
-
-def execute_ai_tool(name, args):
+def execute_ai_tool(name, selected_timestamp):
     if name == "get_anomaly_details":
-        return get_anomaly_details(**args)
+        return get_anomaly_details(selected_timestamp)
+
     if name == "get_pre_anomaly_trend":
-        return get_pre_anomaly_trend(**args)
+        return get_pre_anomaly_trend(selected_timestamp)
+
     if name == "get_feature_contributions":
-        return get_feature_contributions(**args)
+        return get_feature_contributions(selected_timestamp)
+
     if name == "get_operating_context":
-        return get_operating_context(**args)
+        return get_operating_context(selected_timestamp)
+
     if name == "get_baseline_context":
-        return get_baseline_context(**args)
+        return get_baseline_context(selected_timestamp)
+
     return {"error": f"Unknown tool: {name}"}
 
 
@@ -786,25 +769,33 @@ def generate_ai_explanation(selected_anomaly):
             "GROQ_API_KEY is not configured. Add [groq] api_key to Streamlit Cloud Secrets."
         )
     timestamp = clean_value(selected_anomaly.get("timestamp"))
-    inverter_id = (
-        clean_value(selected_anomaly.get("inverter_id"))
-        if "inverter_id" in selected_anomaly.index
-        else None
-    )
+    #inverter_id = (
+     #   clean_value(selected_anomaly.get("inverter_id"))
+      #  if "inverter_id" in selected_anomaly.index
+       # else None
+   # )
     evidence = {}
     system_prompt = """You are an assistant that explains inverter anomalies to a normal \
 dashboard user (not a technical or ML user), using only evidence returned by tools.
 
-TOOL USE- Before writing your final answer, call the available tools -- get_anomaly_details,
+TOOL USE
+Before writing your final answer, call the available tools -- get_anomaly_details,
 get_pre_anomaly_trend, get_feature_contributions, get_operating_context, and
-get_baseline_context -- for the given timestamp and inverter_id, to gather the
-anomaly's operating status, daylight/time-of-day context, power and current values,
-inverter and ambient temperature, efficiency, power factor, frequency,
-communication/quality info, feature contributions, anomaly reason, the 24-hour
-pre-anomaly trend, and healthy reference values under similar operating
-conditions. Use the healthy baseline to compare the anomaly's actual readings
-with normal healthy values for those conditions. Do not rely only on the
-timestamp/inverter_id given to you -- use the tools to gather this evidence yourself.
+get_baseline_context -- for the anomaly selected by the dashboard user.
+
+The dashboard provides the exact anomaly timestamp. Never create, modify,
+guess, shorten, or reconstruct a timestamp. Do not generate timestamps as
+tool arguments. The application automatically supplies the selected
+anomaly timestamp to every tool.
+
+Use the tools to gather the anomaly's operating status, daylight/time-of-day
+context, power and current values, inverter and ambient temperature,
+efficiency, power factor, frequency, communication/quality information,
+feature contributions, anomaly reason, the 24-hour pre-anomaly trend,
+and healthy reference values under similar operating conditions.
+
+Do not rely only on the selected timestamp given in the user message --
+use the tools to gather the evidence yourself.
 - Never invent, estimate, or assume a value that was not returned by a tool. If a tool \
 returns an error or is missing data, work only with what is available.
 - If the remaining evidence is not enough to explain why the anomaly happened, say exactly: \
@@ -877,7 +868,6 @@ Write 4-6 concise sentences in plain, professional language. Keep the entire res
                         "gather the evidence you need -- do not rely on this message alone."
                     ),
                     "selected_timestamp": timestamp,
-                    "inverter_id": inverter_id,
                 },
                 default=str,
             ),
@@ -916,12 +906,13 @@ Write 4-6 concise sentences in plain, professional language. Keep the entire res
         )
 
         for tc in msg.tool_calls:
-            try:
-                args = json.loads(tc.function.arguments)
-            except Exception:
-                args = {}
-            result = execute_ai_tool(tc.function.name, args)
+            result = execute_ai_tool(
+                tc.function.name,
+                timestamp,
+            )
+        
             evidence[tc.function.name] = result
+        
             messages.append(
                 {
                     "role": "tool",
