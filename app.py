@@ -1256,7 +1256,7 @@ baseline_text.append(
 st.markdown("### Healthy Baseline")
 st.caption("Typical healthy operating range")
 
-baseline_cols = st.columns(len(baseline_text))
+baseline_cols = st.columns(len(2))
 
 for col, item in zip(baseline_cols, baseline_text):
     label, value = item.split(" = ", 1)
