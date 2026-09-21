@@ -1256,12 +1256,12 @@ baseline_text.append(
 st.markdown("### Healthy Baseline")
 st.caption("Typical healthy operating range")
 
-baseline_cols = st.columns(len(2))
+baseline_cols = st.columns(4)
 
-for col, item in zip(baseline_cols, baseline_text):
+for i, item in enumerate(baseline_text):
     label, value = item.split(" = ", 1)
 
-    with col:
+    with baseline_cols[i]:
         st.metric(
             label=label,
             value=value
