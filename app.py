@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from openai import OpenAI
+from groq import Groq
 # ============================================================
 # PAGE CONFIG
 # ============================================================
@@ -425,22 +425,19 @@ def get_contribution_cols(frame):
 
 
 @st.cache_resource
-def get_openrouter_client():
-    api_key = os.getenv("OPENROUTER_API_KEY")
+def get_groq_client():
+    api_key = os.getenv("GROQ_API_KEY")
 
     if not api_key:
         try:
-            api_key = st.secrets["OPENROUTER_API_KEY"]
+            api_key = st.secrets["groq"]["api_key"]
         except Exception:
             api_key = None
 
     if not api_key:
         return None
 
-    return OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=api_key
-    )
+    return Groq(api_key=api_key)
 
 # Controlled backend tools used by the AI analyst. The LLM can request
 # evidence, but it never gets arbitrary Python/database access.
@@ -764,7 +761,7 @@ def execute_ai_tool(name, args):
 
 
 def generate_ai_explanation(selected_anomaly):
-    client = get_openrouter_client()
+    client = get_groq_client()
     if client is None:
         raise RuntimeError(
             "GROQ_API_KEY is not configured. Add [groq] api_key to Streamlit Cloud Secrets."
