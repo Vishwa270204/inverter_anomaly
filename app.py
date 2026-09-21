@@ -1196,7 +1196,7 @@ if total_observations > 0 and total_anomalies == 0:
 # ============================================================
 
 if not baseline_df.empty:
-    # Overall healthy baseline
+
     baseline_features = {
         "dc_power_kw": "DC Power",
         "inverter_temperature_c": "Temperature",
@@ -1205,13 +1205,16 @@ if not baseline_df.empty:
     baseline_text = []
 
     for feature, label in baseline_features.items():
-        median_col = f"{feature}_median"
 
-        if median_col in baseline_df.columns:
-            value = baseline_df[median_col].median()
+        q10_col = f"{feature}_q10"
+        q90_col = f"{feature}_q90"
 
-            if pd.notna(value):
-                unit = ""
+        if q10_col in baseline_df.columns and q90_col in baseline_df.columns:
+
+            low = baseline_df[q10_col].median()
+            high = baseline_df[q90_col].median()
+
+            if pd.notna(low) and pd.notna(high):
 
                 if feature.endswith("_kw"):
                     unit = " kW"
@@ -1219,18 +1222,19 @@ if not baseline_df.empty:
                     unit = " A"
                 elif feature.endswith("_c"):
                     unit = " °C"
+                else:
+                    unit = ""
 
                 baseline_text.append(
-                    f"{label} = {value:.1f}{unit}"
+                    f"{label} = {low:.1f}–{high:.1f}{unit}"
                 )
 
     if baseline_text:
         st.markdown("### Healthy Baseline")
         st.caption(
-            "Typical healthy operating values from the healthy baseline."
+            "Typical healthy operating range under the baseline conditions."
         )
-        st.markdown(" | ".join(baseline_text))
-        
+        st.markdown(" | ".join(baseline_text))        
 
 st.markdown("### Anomaly Score Over Time")
 st.caption("Higher points mean more unusual behavior. Red dots are flagged anomalies.")
