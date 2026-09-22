@@ -985,10 +985,12 @@ def generate_ai_explanation(selected_event, event_rows):
         4. WHAT should be checked next
         
         FORMATTING:
-        - Make important information bold using Markdown **bold**.
-        - Bold important values such as the event time, affected parameters, unusual measurements, status, and recommended checks.
-        - Do not bold every word.
-        - Keep the paragraph easy to read.
+        - Use Markdown **bold** very sparingly.
+        - Bold ONLY the most important 2-3 pieces of information in the entire paragraph.
+        - Prefer bolding the main anomaly finding and the recommended action.
+        - Do NOT bold every measurement, timestamp, parameter, status, or value.
+        - Keep most of the paragraph in normal text.
+        - The explanation should look natural and easy to read..
         
         Example style:
         "The inverter showed an unusual condition from **11:30 to 11:50 on 8 June 2025**, lasting **20 minutes**. During this period, **AC power and efficiency were lower than the healthy operating range**, while the inverter was in **RUNNING** status. The main unusual parameters were **AC power and inverter temperature**. The available data does not confirm the exact cause, so **power conditions and inverter temperature should be checked for this period**."
