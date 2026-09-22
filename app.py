@@ -761,14 +761,60 @@ def execute_ai_tool(name, args):
 
 
 def generate_ai_explanation(selected_anomaly):
+    """
+    Generate one explanation for the currently selected anomaly.
+
+    Python collects the evidence first. Groq is used only for the final
+    natural-language explanation, so the LLM does not control the tool-call
+    loop and cannot get stuck repeatedly requesting tools.
+    """
     client = get_groq_client()
 
     if client is None:
         raise RuntimeError(
-            "GROQ_API_KEY is not configured. "
-            "Add [groq] api_key to Streamlit Cloud Secrets."
+            "GROQ_API_KEY is not configured. Set GROQ_API_KEY in the environment "
+            "or Streamlit secrets."
         )
 
+    # ------------------------------------------------------------
+    # 1. COLLECT ALL EVIDENCE IN PYTHON
+    # ------------------------------------------------------------
+    evidence = {}
+
+    # Use the existing evidence/tool functions already defined in the app.
+    # These functions are deterministic and do not call the LLM.
+    try:
+        evidence = get_anomaly_details(selected_anomaly)
+    except Exception as e:
+        evidence["anomaly_details_error"] = str(e)
+
+    try:
+        trend = get_pre_anomaly_trend(selected_anomaly)
+        evidence["pre_anomaly_trend"] = trend
+    except Exception as e:
+        evidence["pre_anomaly_trend_error"] = str(e)
+
+    try:
+        contributions = get_feature_contributions(selected_anomaly)
+        evidence["feature_contributions"] = contributions
+    except Exception as e:
+        evidence["feature_contributions_error"] = str(e)
+
+    try:
+        operating_context = get_operating_context(selected_anomaly)
+        evidence["operating_context"] = operating_context
+    except Exception as e:
+        evidence["operating_context_error"] = str(e)
+
+    try:
+        baseline = get_baseline_context(selected_anomaly)
+        evidence["healthy_baseline"] = baseline
+    except Exception as e:
+        evidence["healthy_baseline_error"] = str(e)
+
+    # ------------------------------------------------------------
+    # 2. ASK GROQ ONLY FOR THE FINAL EXPLANATION
+    # ------------------------------------------------------------
     timestamp = clean_value(selected_anomaly.get("timestamp"))
     inverter_id = (
         clean_value(selected_anomaly.get("inverter_id"))
@@ -776,210 +822,85 @@ def generate_ai_explanation(selected_anomaly):
         else None
     )
 
-    evidence = {}
+    system_prompt = """
+You are the explanation assistant inside an inverter anomaly detection
+dashboard.
 
-    system_prompt = """You are an assistant that explains inverter anomalies
-to a normal dashboard user using only evidence returned by the available tools.
+Your job is ONLY to turn the supplied anomaly evidence into a concise,
+factual explanation for the dashboard user.
 
-Before writing the final answer, gather the available evidence for the selected
-timestamp and inverter, including anomaly details, operating context, healthy
-baseline, feature contributions, and the pre-anomaly trend.
-
-Never invent or estimate values.
-
-A feature contribution means that the parameter contributed to the unusual
-pattern. It does NOT prove that the parameter caused the anomaly and it does
-NOT prove component failure.
-
-The healthy baseline is only a comparison reference for similar operating
-conditions. It does not establish a root cause.
-
-Consider daylight, hour, month, inverter status, power level, temperature,
-communication status, and the pre-anomaly trend before describing something
-as unusual.
-
-Use simple, professional language.
-
-Do not mention autoencoder, reconstruction error, threshold, anomaly score,
-feature contribution percentage, probability, confidence, or other ML
-internals.
-
-Do not claim a root cause.
-
-Return ONE paragraph only.
-
-The paragraph must naturally explain:
-- what happened
-- when it happened
-- why it was unusual
-- what should be checked
-
-Use 4-6 concise sentences and keep it under about 110 words.
-
-Do not use headings, bullets, numbered lists, Markdown, or labels.
+Important rules:
+- Explain only what the supplied evidence supports.
+- Do not invent measurements, causes, events, or trends.
+- Do not call anything a confirmed root cause unless the evidence explicitly
+  establishes causation.
+- Feature contributions indicate parameters that contributed to the unusual
+  pattern; they are NOT automatically causes.
+- Do not automatically call an anomaly a fault.
+- Consider operating condition, daylight, power level, temperature,
+  communication condition, baseline comparison, and the pre-anomaly trend
+  when those fields are available.
+- If evidence is missing, say that the available data does not establish it.
+- Do not mention autoencoder, reconstruction error, threshold,
+  anomaly-score ratio, probability, confidence, or internal ML details.
+- Do not use headings, bullets, labels, Markdown, or separate sections.
+- Return exactly ONE natural-language paragraph.
+- Keep it concise: about 4-6 sentences and preferably under 110 words.
+- The paragraph should naturally cover what happened, when it happened,
+  why the observation was flagged based on the evidence, and what should
+  be checked next.
 """
 
-    messages = [
-        {
-            "role": "system",
-            "content": system_prompt,
+    user_payload = {
+        "selected_anomaly": {
+            "timestamp": timestamp,
+            "inverter_id": inverter_id,
         },
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "instruction": (
-                        "Explain the selected inverter anomaly using the "
-                        "available evidence tools."
-                    ),
-                    "selected_timestamp": timestamp,
-                    "inverter_id": inverter_id,
-                },
-                default=str,
-            ),
-        },
-    ]
+        "evidence": evidence,
+    }
 
-    # Give the model enough turns to gather evidence, but guarantee that
-    # the function eventually produces a final answer.
-    for _ in range(8):
+    # Use JSON so the model receives the complete evidence in one request.
+    evidence_json = json.dumps(
+        user_payload,
+        default=str,
+        ensure_ascii=False,
+    )
 
+    try:
         response = client.chat.completions.create(
             model="openai/gpt-oss-20b",
-            messages=messages,
-            tools=AI_TOOLS,
-            tool_choice="auto",
-            temperature=0.2,
-        )
-
-        msg = response.choices[0].message
-
-        # ----------------------------------------------------
-        # FINAL ANSWER FROM GROQ
-        # ----------------------------------------------------
-        if not msg.tool_calls:
-
-            explanation = (msg.content or "").strip()
-
-            if explanation:
-                return explanation, evidence
-
-            # Groq returned no tool calls and no text.
-            # Make one final request without tools so that the
-            # model must produce the dashboard explanation.
-            final_messages = messages + [
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
                 {
                     "role": "user",
                     "content": (
-                        "Now provide the final dashboard explanation as "
-                        "one paragraph. Do not call any more tools."
+                        "Generate the final dashboard explanation from this "
+                        "evidence. Do not call tools. Return only the one "
+                        "paragraph explanation.\n\n"
+                        + evidence_json
                     ),
-                }
-            ]
-
-            final_response = client.chat.completions.create(
-                model="openai/gpt-oss-20b",
-                messages=final_messages,
-                temperature=0.2,
-            )
-
-            final_text = (
-                final_response.choices[0].message.content or ""
-            ).strip()
-
-            if final_text:
-                return final_text, evidence
-
-            raise RuntimeError(
-                "Groq returned an empty explanation."
-            )
-
-        # ----------------------------------------------------
-        # ADD GROQ TOOL CALLS TO CONVERSATION
-        # ----------------------------------------------------
-        messages.append(
-            {
-                "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
-            }
+                },
+            ],
+            temperature=0.2,
+            max_tokens=220,
         )
+    except Exception as e:
+        raise RuntimeError(f"Groq request failed: {e}") from e
 
-        # ----------------------------------------------------
-        # EXECUTE EACH TOOL
-        # ----------------------------------------------------
-        for tc in msg.tool_calls:
+    explanation = getattr(response.choices[0].message, "content", None)
 
-            try:
-                args = json.loads(tc.function.arguments)
-            except Exception:
-                args = {}
+    if explanation is None:
+        raise RuntimeError("Groq returned no text content.")
 
-            try:
-                result = execute_ai_tool(
-                    tc.function.name,
-                    args,
-                )
-            except Exception as tool_error:
-                result = {
-                    "error": str(tool_error)
-                }
+    explanation = str(explanation).strip()
 
-            evidence[tc.function.name] = result
+    if not explanation:
+        raise RuntimeError("Groq returned an empty explanation.")
 
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(
-                        result,
-                        default=str,
-                    ),
-                }
-            )
-
-    # --------------------------------------------------------
-    # SAFETY FALLBACK
-    # --------------------------------------------------------
-    fallback_messages = messages + [
-        {
-            "role": "user",
-            "content": (
-                "Stop gathering evidence now. Based only on the evidence "
-                "already collected above, write the final explanation as "
-                "one concise paragraph. Do not call tools."
-            ),
-        }
-    ]
-
-    fallback_response = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
-        messages=fallback_messages,
-        temperature=0.2,
-    )
-
-    fallback_text = (
-        fallback_response.choices[0].message.content or ""
-    ).strip()
-
-    if fallback_text:
-        return fallback_text, evidence
-
-    raise RuntimeError(
-        "Groq did not return a usable explanation."
-    )
-
-
+    return explanation, evidence
 
 def render_ai_explanation(explanation):
     """Render the LLM response as one clean paragraph."""
