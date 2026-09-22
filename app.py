@@ -777,44 +777,15 @@ def generate_ai_explanation(selected_anomaly):
         )
 
     # ------------------------------------------------------------
-    # 1. COLLECT ALL EVIDENCE IN PYTHON
+    # 0. RESOLVE THE SCALAR TIMESTAMP / INVERTER ID UP FRONT
     # ------------------------------------------------------------
-    evidence = {}
-
-    # Use the existing evidence/tool functions already defined in the app.
-    # These functions are deterministic and do not call the LLM.
-    try:
-        evidence = get_anomaly_details(selected_anomaly)
-    except Exception as e:
-        evidence["anomaly_details_error"] = str(e)
-
-    try:
-        trend = get_pre_anomaly_trend(selected_anomaly)
-        evidence["pre_anomaly_trend"] = trend
-    except Exception as e:
-        evidence["pre_anomaly_trend_error"] = str(e)
-
-    try:
-        contributions = get_feature_contributions(selected_anomaly)
-        evidence["feature_contributions"] = contributions
-    except Exception as e:
-        evidence["feature_contributions_error"] = str(e)
-
-    try:
-        operating_context = get_operating_context(selected_anomaly)
-        evidence["operating_context"] = operating_context
-    except Exception as e:
-        evidence["operating_context_error"] = str(e)
-
-    try:
-        baseline = get_baseline_context(selected_anomaly)
-        evidence["healthy_baseline"] = baseline
-    except Exception as e:
-        evidence["healthy_baseline_error"] = str(e)
-
-    # ------------------------------------------------------------
-    # 2. ASK GROQ ONLY FOR THE FINAL EXPLANATION
-    # ------------------------------------------------------------
+    # NOTE: this used to be computed *after* the evidence-gathering block
+    # below, which meant every get_* call was accidentally passed the
+    # whole `selected_anomaly` Series as `timestamp` instead of a scalar.
+    # pd.to_datetime() on a full row tries to convert every value in it
+    # (including the numpy.bool_ anomaly_flag), which is exactly the
+    # "<class 'numpy.bool'> is not convertible to datetime" error. Moving
+    # this up and passing the scalars explicitly fixes it.
     timestamp = clean_value(selected_anomaly.get("timestamp"))
     inverter_id = (
         clean_value(selected_anomaly.get("inverter_id"))
@@ -822,6 +793,45 @@ def generate_ai_explanation(selected_anomaly):
         else None
     )
 
+    # ------------------------------------------------------------
+    # 1. COLLECT ALL EVIDENCE IN PYTHON
+    # ------------------------------------------------------------
+    evidence = {}
+
+    # Use the existing evidence/tool functions already defined in the app.
+    # These functions are deterministic and do not call the LLM.
+    try:
+        evidence = get_anomaly_details(timestamp, inverter_id)
+    except Exception as e:
+        evidence["anomaly_details_error"] = str(e)
+
+    try:
+        trend = get_pre_anomaly_trend(timestamp, inverter_id)
+        evidence["pre_anomaly_trend"] = trend
+    except Exception as e:
+        evidence["pre_anomaly_trend_error"] = str(e)
+
+    try:
+        contributions = get_feature_contributions(timestamp, inverter_id)
+        evidence["feature_contributions"] = contributions
+    except Exception as e:
+        evidence["feature_contributions_error"] = str(e)
+
+    try:
+        operating_context = get_operating_context(timestamp, inverter_id)
+        evidence["operating_context"] = operating_context
+    except Exception as e:
+        evidence["operating_context_error"] = str(e)
+
+    try:
+        baseline = get_baseline_context(timestamp, inverter_id)
+        evidence["healthy_baseline"] = baseline
+    except Exception as e:
+        evidence["healthy_baseline_error"] = str(e)
+
+    # ------------------------------------------------------------
+    # 2. ASK GROQ ONLY FOR THE FINAL EXPLANATION
+    # ------------------------------------------------------------
     # GPT-OSS is a reasoning model. Keep the instruction and evidence in
     # one user message, disable returned reasoning, and give the model enough
     # completion budget for BOTH reasoning and the final paragraph.
