@@ -16,7 +16,7 @@ import json
 import os
 import re
 from datetime import datetime, timedelta
-
+from zoneinfo import ZoneInfo
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -403,11 +403,15 @@ def fmt_num(value, decimals=2, suffix="", dash="—"):
         return dash
     return f"{value:,.{decimals}f}{suffix}"
 
-
+DISPLAY_TZ = ZoneInfo("Asia/Kolkata")
 def fmt_time(value, dash="—"):
     if value is None or pd.isna(value):
         return dash
-    return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M")
+    ts = pd.to_datetime(value)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    ts = ts.tz_convert(DISPLAY_TZ)
+    return ts.strftime("%Y-%m-%d %H:%M"
 
 
 def get_trend_window(source, end_time, hours_back=24):
