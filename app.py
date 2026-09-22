@@ -262,6 +262,11 @@ st.markdown(
         word-break: normal;
         overflow-wrap: anywhere;
     }
+    
+    .ai-body strong {
+        font-weight: 700;
+        color: #0F3554;
+    }
 
     .ai-checks {
         margin: 0.15rem 0 0 1.35rem;
@@ -1042,23 +1047,41 @@ def generate_ai_explanation(selected_event, event_rows):
     return explanation, evidence
 
 def render_ai_explanation(explanation):
-    """Render the LLM response as one clean paragraph."""
+    """Render the LLM response as one clean paragraph with bold highlights."""
     if not explanation:
         return
 
     text = str(explanation).strip()
 
-    # Remove accidental Markdown markers if the model returns them.
-    text = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", text)
-    text = re.sub(r"^\s*(?:What happened|When|Why it was flagged|What to check)\s*:\s*", "", text, flags=re.I)
-    text = re.sub(r"\s+", " ", text).strip()
-
-    safe = html.escape(text)
-    st.markdown(
-        f'<div class="ai-card"><div class="ai-body">{safe}</div></div>',
-        unsafe_allow_html=True,
+    # Remove accidental headings if the model adds them.
+    text = re.sub(
+        r"^\s*(?:What happened|When|Why it was flagged|What to check)\s*:\s*",
+        "",
+        text,
+        flags=re.I,
     )
 
+    # Keep the response as one paragraph.
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # Escape HTML first for safety.
+    safe = html.escape(text)
+
+    # Convert Markdown bold **text** into HTML bold.
+    safe = re.sub(
+        r"\*\*(.+?)\*\*",
+        r"<strong>\1</strong>",
+        safe
+    )
+
+    st.markdown(
+        f'''
+        <div class="ai-card">
+            <div class="ai-body">{safe}</div>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
 
 # ============================================================
 # HEADER
