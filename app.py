@@ -1507,10 +1507,10 @@ if len(events_df) > 0:
     inv_cols = st.columns(3)
     with inv_cols[0]:
         st.metric(
-            "Event Start",
-            fmt_time(selected_event.get("start_time"))
+            "Event Time",
+            f"{fmt_time(selected_event.get('start_time'))} → "
+            f"{fmt_time(selected_event.get('end_time'))}"
         )
-    
     with inv_cols[1]:
         st.metric(
             "Event Duration",
