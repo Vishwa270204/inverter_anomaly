@@ -989,7 +989,7 @@ def generate_ai_explanation(selected_event, event_rows):
         "The inverter showed an unusual condition from **11:30 to 11:50 on 8 June 2025**, lasting **20 minutes**. During this period, **AC power and efficiency were lower than the healthy operating range**, while the inverter was in **RUNNING** status. The main unusual parameters were **AC power and inverter temperature**. The available data does not confirm the exact cause, so **power conditions and inverter temperature should be checked for this period**."
         
         EVENT EVIDENCE:
-        """ + json.dumps(
+    """ + json.dumps(
             evidence,
             default=str,
             ensure_ascii=False
