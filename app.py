@@ -1088,94 +1088,91 @@ if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
 else:
     st.info("No anomaly score data available for the selected period.")
 
-# ------------------------------------------------------------
-# TRENDS
-# ------------------------------------------------------------
-st.markdown("## Trends")
-st.caption("Historical power and temperature behavior for the selected period.")
+ # --------------------------------------------------------
+    # AI EXPLANATION
+    # --------------------------------------------------------
+    ai_header_col, ai_button_col = st.columns([7, 1.35])
 
-trend_total = len(filtered_trend_df)
-trend_col1, trend_col2 = st.columns(2)
-
-with trend_col1:
-    st.markdown("### Power Output")
-    st.caption("How much power the inverter produced.")
-    has_dc = "dc_power_kw" in filtered_trend_df.columns
-    has_ac = "ac_power_kw" in filtered_trend_df.columns
-    if trend_total > 0 and (has_dc or has_ac):
-        fig_power = go.Figure()
-        if has_ac:
-            fig_power.add_trace(
-                go.Scatter(
-                    x=filtered_trend_df["timestamp"],
-                    y=filtered_trend_df["ac_power_kw"],
-                    mode="lines",
-                    name="AC Power (kW)",
-                    line=dict(color="#4C78A8"),
-                )
-            )
-        if has_dc:
-            fig_power.add_trace(
-                go.Scatter(
-                    x=filtered_trend_df["timestamp"],
-                    y=filtered_trend_df["dc_power_kw"],
-                    mode="lines",
-                    name="DC Power (kW)",
-                    line=dict(color="#72B7B2"),
-                )
-            )
-        fig_power.update_layout(
-            xaxis_title="Time",
-            yaxis_title="Power (kW)",
-            hovermode="x unified",
-            height=340,
-            template="plotly_white",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-            margin=dict(t=35, l=55, r=20, b=45),
+    with ai_header_col:
+        st.markdown(
+            '<div class="ai-title">AI Explanation</div>',
+            unsafe_allow_html=True,
         )
-        st.plotly_chart(fig_power, width="stretch")
-    else:
-        st.info("Power data not available.")
 
-with trend_col2:
-    st.markdown("### Temperature")
-    st.caption("Inverter temperature vs. the surrounding air.")
-    has_temp = "inverter_temperature_c" in filtered_trend_df.columns
-    has_ambient = "ambient_temperature_c" in filtered_trend_df.columns
-    if trend_total > 0 and (has_temp or has_ambient):
-        fig_temp = go.Figure()
-        if has_temp:
-            fig_temp.add_trace(
-                go.Scatter(
-                    x=filtered_trend_df["timestamp"],
-                    y=filtered_trend_df["inverter_temperature_c"],
-                    mode="lines",
-                    name="Inverter Temp (°C)",
-                    line=dict(color="#E45756"),
-                )
-            )
-        if has_ambient:
-            fig_temp.add_trace(
-                go.Scatter(
-                    x=filtered_trend_df["timestamp"],
-                    y=filtered_trend_df["ambient_temperature_c"],
-                    mode="lines",
-                    name="Ambient Temp (°C)",
-                    line=dict(color="#F58518"),
-                )
-            )
-        fig_temp.update_layout(
-            xaxis_title="Time",
-            yaxis_title="Temperature (°C)",
-            hovermode="x unified",
-            height=340,
-            template="plotly_white",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-            margin=dict(t=35, l=55, r=20, b=45),
+    with ai_button_col:
+        regenerate = st.button(
+            "Regenerate",
+            type="primary",
+            use_container_width=True,
+            help="Generate a fresh explanation for this anomaly.",
         )
-        st.plotly_chart(fig_temp, width="stretch")
+
+    ts_key = clean_value(selected_anomaly.get("timestamp"))
+    inv_key = (
+        clean_value(selected_anomaly.get("inverter_id"))
+        if "inverter_id" in selected_anomaly.index
+        else None
+    )
+    anomaly_key = f"{ts_key}|{inv_key}"
+    cached = st.session_state["ai_explanations"].get(anomaly_key)
+
+    if regenerate or cached is None:
+
+        with st.spinner("Generating explanation from the anomaly evidence..."):
+
+            try:
+                ai_explanation, ai_evidence = generate_ai_explanation(
+                    selected_anomaly
+                )
+
+                cached = {
+                    "explanation": ai_explanation,
+                    "evidence": ai_evidence,
+                    "error": None,
+                }
+
+            except Exception as e:
+
+                cached = {
+                    "explanation": None,
+                    "evidence": None,
+                    "error": str(e),
+                }
+
+            st.session_state["ai_explanations"][anomaly_key] = cached
+
+
+    # ------------------------------------------------------------
+    # ALWAYS RENDER AN AI RESULT AREA
+    # ------------------------------------------------------------
+
+    if cached is None:
+        st.info("Select an anomaly to generate an AI explanation.")
+
+    elif cached.get("error"):
+
+        st.error(
+            f"AI explanation failed: {cached['error']}"
+        )
+
+    elif cached.get("explanation"):
+
+        render_ai_explanation(
+            cached["explanation"]
+        )
+
     else:
-        st.info("Temperature data not available.")
+
+        st.warning(
+            "Groq did not return an explanation for this anomaly."
+        )
+
+else:
+    st.info(
+        "Nothing to investigate here — there are no anomalies in the selected "
+        "date range. Widen the date range or clear **Show anomalies only** "
+        "to bring up more data."
+    )
 
 # ------------------------------------------------------------
 # DETECTED ANOMALIES
@@ -1327,88 +1324,4 @@ if len(anomaly_df) > 0:
 
     st.divider()
 
-    # --------------------------------------------------------
-    # AI EXPLANATION
-    # --------------------------------------------------------
-    ai_header_col, ai_button_col = st.columns([7, 1.35])
-
-    with ai_header_col:
-        st.markdown(
-            '<div class="ai-title">AI Explanation</div>',
-            unsafe_allow_html=True,
-        )
-
-    with ai_button_col:
-        regenerate = st.button(
-            "Regenerate",
-            type="primary",
-            use_container_width=True,
-            help="Generate a fresh explanation for this anomaly.",
-        )
-
-    ts_key = clean_value(selected_anomaly.get("timestamp"))
-    inv_key = (
-        clean_value(selected_anomaly.get("inverter_id"))
-        if "inverter_id" in selected_anomaly.index
-        else None
-    )
-    anomaly_key = f"{ts_key}|{inv_key}"
-    cached = st.session_state["ai_explanations"].get(anomaly_key)
-
-    if regenerate or cached is None:
-
-        with st.spinner("Generating explanation from the anomaly evidence..."):
-
-            try:
-                ai_explanation, ai_evidence = generate_ai_explanation(
-                    selected_anomaly
-                )
-
-                cached = {
-                    "explanation": ai_explanation,
-                    "evidence": ai_evidence,
-                    "error": None,
-                }
-
-            except Exception as e:
-
-                cached = {
-                    "explanation": None,
-                    "evidence": None,
-                    "error": str(e),
-                }
-
-            st.session_state["ai_explanations"][anomaly_key] = cached
-
-
-    # ------------------------------------------------------------
-    # ALWAYS RENDER AN AI RESULT AREA
-    # ------------------------------------------------------------
-
-    if cached is None:
-        st.info("Select an anomaly to generate an AI explanation.")
-
-    elif cached.get("error"):
-
-        st.error(
-            f"AI explanation failed: {cached['error']}"
-        )
-
-    elif cached.get("explanation"):
-
-        render_ai_explanation(
-            cached["explanation"]
-        )
-
-    else:
-
-        st.warning(
-            "Groq did not return an explanation for this anomaly."
-        )
-
-else:
-    st.info(
-        "Nothing to investigate here — there are no anomalies in the selected "
-        "date range. Widen the date range or clear **Show anomalies only** "
-        "to bring up more data."
-    )
+   
