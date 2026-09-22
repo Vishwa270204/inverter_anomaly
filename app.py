@@ -1167,12 +1167,12 @@ else:
             "Groq did not return an explanation for this anomaly."
         )
 
-else:
-    st.info(
-        "Nothing to investigate here — there are no anomalies in the selected "
-        "date range. Widen the date range or clear **Show anomalies only** "
-        "to bring up more data."
-    )
+    else:
+        st.info(
+            "Nothing to investigate here — there are no anomalies in the selected "
+            "date range. Widen the date range or clear **Show anomalies only** "
+            "to bring up more data."
+        )
 
 # ------------------------------------------------------------
 # DETECTED ANOMALIES
