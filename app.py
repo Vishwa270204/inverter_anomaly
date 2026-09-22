@@ -1656,8 +1656,8 @@ if len(events_df) > 0:
     ]
 
     friendly_names = {
-        "start_time": "Start",
-        "end_time": "End",
+        "start_time": "Start Time",
+        "end_time": "End Time",
         "duration_min": "Duration (min)",
         "anomaly_count": "Anomaly Points"
     }
