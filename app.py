@@ -454,7 +454,7 @@ def row_to_dict(row):
     return {str(k): clean_value(v) for k, v in row.items()}
 
 
-def get_anomaly_details(timestamp, inverter_id=None):
+def get_anomaly_details(timestamp):
     target = pd.to_datetime(timestamp)
     source = df.copy()
     if inverter_id is not None and "inverter_id" in source.columns:
@@ -465,7 +465,7 @@ def get_anomaly_details(timestamp, inverter_id=None):
     return row_to_dict(source.loc[idx])
 
 
-def get_pre_anomaly_trend(timestamp, inverter_id=None, hours=24):
+def get_pre_anomaly_trend(timestamp, hours=24):
     target = pd.to_datetime(timestamp)
     start = target - timedelta(hours=float(hours))
     source = trend_df[(trend_df["timestamp"] >= start) & (trend_df["timestamp"] <= target)].copy()
@@ -936,8 +936,8 @@ def build_anomaly_events(anomaly_df, gap_minutes=1):
     """
     Group continuous anomaly observations into anomaly events.
 
-    One event = continuous anomaly occurrence.
-    A new event starts when the time gap between two anomaly
+    One event = continuous occurrence of anomaly.
+    A new event starts when the gap between two anomaly
     observations is greater than gap_minutes.
     """
 
@@ -946,66 +946,61 @@ def build_anomaly_events(anomaly_df, gap_minutes=1):
 
     work = anomaly_df.copy()
     work["timestamp"] = pd.to_datetime(work["timestamp"])
-    work = work.sort_values(["inverter_id", "timestamp"])
+    work = work.sort_values("timestamp").reset_index(drop=True)
+
+    time_gap = work["timestamp"].diff().dt.total_seconds() / 60
+
+    work["event_break"] = (
+        time_gap.isna() |
+        (time_gap > gap_minutes)
+    )
+
+    work["event_number"] = work["event_break"].cumsum()
 
     events = []
 
-    for inverter_id, group in work.groupby("inverter_id", dropna=False):
+    for event_number, event_rows in work.groupby("event_number"):
 
-        group = group.sort_values("timestamp").copy()
+        start_time = event_rows["timestamp"].min()
+        end_time = event_rows["timestamp"].max()
 
-        time_gap = group["timestamp"].diff().dt.total_seconds() / 60
+        event = {
+            "event_id": f"Event {int(event_number)}",
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_min": (
+                end_time - start_time
+            ).total_seconds() / 60,
+            "anomaly_count": len(event_rows),
+        }
 
-        group["event_break"] = (
-            time_gap.isna() |
-            (time_gap > gap_minutes)
-        )
+        if "anomaly_score_ratio" in event_rows.columns:
+            event["max_severity"] = event_rows["anomaly_score_ratio"].max()
+            event["mean_severity"] = event_rows["anomaly_score_ratio"].mean()
 
-        group["event_id"] = group["event_break"].cumsum()
+        if "reconstruction_error" in event_rows.columns:
+            event["max_reconstruction_error"] = (
+                event_rows["reconstruction_error"].max()
+            )
+            event["mean_reconstruction_error"] = (
+                event_rows["reconstruction_error"].mean()
+            )
 
-        for event_number, event_rows in group.groupby("event_id"):
+        if "inverter_status" in event_rows.columns:
+            mode = event_rows["inverter_status"].mode()
+            event["dominant_status"] = (
+                mode.iloc[0] if len(mode) else None
+            )
 
-            start_time = event_rows["timestamp"].min()
-            end_time = event_rows["timestamp"].max()
+        if "anomaly_type" in event_rows.columns:
+            mode = event_rows["anomaly_type"].mode()
+            event["anomaly_type"] = (
+                mode.iloc[0] if len(mode) else None
+            )
 
-            event = {
-                "event_id": f"{inverter_id}_{event_number}",
-                "inverter_id": inverter_id,
-                "start_time": start_time,
-                "end_time": end_time,
-                "duration_min": (
-                    (end_time - start_time).total_seconds() / 60
-                ),
-                "anomaly_count": len(event_rows),
-            }
+        events.append(event)
 
-            if "anomaly_score_ratio" in event_rows.columns:
-                event["max_severity"] = event_rows["anomaly_score_ratio"].max()
-                event["mean_severity"] = event_rows["anomaly_score_ratio"].mean()
-
-            if "reconstruction_error" in event_rows.columns:
-                event["max_reconstruction_error"] = (
-                    event_rows["reconstruction_error"].max()
-                )
-                event["mean_reconstruction_error"] = (
-                    event_rows["reconstruction_error"].mean()
-                )
-
-            if "inverter_status" in event_rows.columns:
-                mode = event_rows["inverter_status"].mode()
-                event["dominant_status"] = (
-                    mode.iloc[0] if len(mode) else None
-                )
-
-            if "anomaly_type" in event_rows.columns:
-                mode = event_rows["anomaly_type"].mode()
-                event["anomaly_type"] = (
-                    mode.iloc[0] if len(mode) else None
-                )
-
-            events.append(event)
-
-    return pd.DataFrame(events).sort_values("start_time").reset_index(drop=True)
+    return pd.DataFrame(events).reset_index(drop=True)
 # ============================================================
 # FILTER DATA
 # ============================================================
@@ -1190,7 +1185,6 @@ if len(events_df) > 0:
     selected_event = events_df.loc[selected_event_index]
 
     event_rows = anomaly_df[
-        (anomaly_df["inverter_id"] == selected_event["inverter_id"]) &
         (anomaly_df["timestamp"] >= selected_event["start_time"]) &
         (anomaly_df["timestamp"] <= selected_event["end_time"])
     ].copy()
@@ -1212,7 +1206,6 @@ with ai_button_col:
     )
 
 event_key = clean_value(selected_event.get("event_id"))
-inv_key = clean_value(selected_event.get("inverter_id"))
 
 anomaly_key = f"{event_key}|{inv_key}"
 cached = st.session_state["ai_explanations"].get(anomaly_key)
@@ -1279,7 +1272,6 @@ if len(events_df) > 0:
     selected_event = events_df.loc[selected_event_index]
 
     event_rows = anomaly_df[
-        (anomaly_df["inverter_id"] == selected_event["inverter_id"]) &
         (anomaly_df["timestamp"] >= selected_event["start_time"]) &
         (anomaly_df["timestamp"] <= selected_event["end_time"])
     ].copy()
