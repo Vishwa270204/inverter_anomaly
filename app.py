@@ -1648,8 +1648,6 @@ if len(events_df) > 0:
         "end_time",
         "duration_min",
         "anomaly_count",
-        "max_severity",
-        "dominant_status",
     ]
 
     display_columns = [
@@ -1661,9 +1659,7 @@ if len(events_df) > 0:
         "start_time": "Start",
         "end_time": "End",
         "duration_min": "Duration (min)",
-        "anomaly_count": "Anomaly Points",
-        "max_severity": "Max Severity",
-        "dominant_status": "Status",
+        "anomaly_count": "Anomaly Points"
     }
 
     table = (
