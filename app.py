@@ -660,14 +660,12 @@ def get_baseline_context(timestamp, inverter_id=None):
     return result
 
 
-def generate_ai_explanation(selected_anomaly):
-    """
-    Generate one explanation for the currently selected anomaly.
+def generate_ai_explanation(selected_event, event_rows):
+    event_start = selected_event["start_time"]
+    event_end = selected_event["end_time"]
+    event_duration = selected_event["duration_min"]
+    anomaly_count = selected_event["anomaly_count"]
 
-    Python collects the evidence first. Groq is used only for the final
-    natural-language explanation, so the LLM does not control the tool-call
-    loop and cannot get stuck repeatedly requesting tools.
-    """
     client = get_groq_client()
 
     if client is None:
@@ -930,7 +928,84 @@ with st.container(border=True):
             "but no anomaly results."
         )
 
+# ============================================================
+# BUILD ANOMALY EVENTS
+# ============================================================
 
+def build_anomaly_events(anomaly_df, gap_minutes=1):
+    """
+    Group continuous anomaly observations into anomaly events.
+
+    One event = continuous anomaly occurrence.
+    A new event starts when the time gap between two anomaly
+    observations is greater than gap_minutes.
+    """
+
+    if anomaly_df.empty:
+        return pd.DataFrame()
+
+    work = anomaly_df.copy()
+    work["timestamp"] = pd.to_datetime(work["timestamp"])
+    work = work.sort_values(["inverter_id", "timestamp"])
+
+    events = []
+
+    for inverter_id, group in work.groupby("inverter_id", dropna=False):
+
+        group = group.sort_values("timestamp").copy()
+
+        time_gap = group["timestamp"].diff().dt.total_seconds() / 60
+
+        group["event_break"] = (
+            time_gap.isna() |
+            (time_gap > gap_minutes)
+        )
+
+        group["event_id"] = group["event_break"].cumsum()
+
+        for event_number, event_rows in group.groupby("event_id"):
+
+            start_time = event_rows["timestamp"].min()
+            end_time = event_rows["timestamp"].max()
+
+            event = {
+                "event_id": f"{inverter_id}_{event_number}",
+                "inverter_id": inverter_id,
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration_min": (
+                    (end_time - start_time).total_seconds() / 60
+                ),
+                "anomaly_count": len(event_rows),
+            }
+
+            if "anomaly_score_ratio" in event_rows.columns:
+                event["max_severity"] = event_rows["anomaly_score_ratio"].max()
+                event["mean_severity"] = event_rows["anomaly_score_ratio"].mean()
+
+            if "reconstruction_error" in event_rows.columns:
+                event["max_reconstruction_error"] = (
+                    event_rows["reconstruction_error"].max()
+                )
+                event["mean_reconstruction_error"] = (
+                    event_rows["reconstruction_error"].mean()
+                )
+
+            if "inverter_status" in event_rows.columns:
+                mode = event_rows["inverter_status"].mode()
+                event["dominant_status"] = (
+                    mode.iloc[0] if len(mode) else None
+                )
+
+            if "anomaly_type" in event_rows.columns:
+                mode = event_rows["anomaly_type"].mode()
+                event["anomaly_type"] = (
+                    mode.iloc[0] if len(mode) else None
+                )
+
+            events.append(event)
+
+    return pd.DataFrame(events).sort_values("start_time").reset_index(drop=True)
 # ============================================================
 # FILTER DATA
 # ============================================================
@@ -974,13 +1049,17 @@ max_temperature = (
 )
 
 anomaly_df = (
-    filtered_df[filtered_df["anomaly_flag"]].copy() if total_observations else filtered_df.copy()
+    filtered_df[filtered_df["anomaly_flag"]].copy()
+    if total_observations
+    else filtered_df.copy()
 )
 
+# Build continuous anomaly events
+events_df = build_anomaly_events(
+    anomaly_df,
+    gap_minutes=1
+)
 
-# ============================================================
-# DASHBOARD CONTENT -- single scrollable page
-# ============================================================
 
 # ------------------------------------------------------------
 # OVERVIEW
@@ -1092,19 +1171,30 @@ else:
 
 # ------------------------------------------------------------
 # AI EXPLANATION
-# ------------------------------------------------------------
-if len(anomaly_df) > 0:
-    anomaly_df = anomaly_df.sort_values("timestamp").reset_index(drop=True)
-    selected_index = st.selectbox(
-        "Select an anomaly for AI explanation",
-        range(len(anomaly_df)),
-        format_func=lambda x: fmt_time(anomaly_df.loc[x, "timestamp"]),
-        key="ai_anomaly_selector",
-    )
-    selected_anomaly = anomaly_df.loc[selected_index]
-
-
 # --------------------------------------------------------
+if len(events_df) > 0:
+
+    events_df = events_df.sort_values("start_time").reset_index(drop=True)
+
+    selected_event_index = st.selectbox(
+        "Select an anomaly event for AI explanation",
+        range(len(events_df)),
+        format_func=lambda x: (
+            f"Event {x + 1} | "
+            f"{fmt_time(events_df.loc[x, 'start_time'])} → "
+            f"{fmt_time(events_df.loc[x, 'end_time'])}"
+        ),
+        key="ai_event_selector",
+    )
+
+    selected_event = events_df.loc[selected_event_index]
+
+    event_rows = anomaly_df[
+        (anomaly_df["inverter_id"] == selected_event["inverter_id"]) &
+        (anomaly_df["timestamp"] >= selected_event["start_time"]) &
+        (anomaly_df["timestamp"] <= selected_event["end_time"])
+    ].copy()
+    
 ai_header_col, ai_button_col = st.columns([7, 1.35])
 
 with ai_header_col:
@@ -1121,13 +1211,10 @@ with ai_button_col:
         help="Generate a fresh explanation for this anomaly.",
     )
 
-ts_key = clean_value(selected_anomaly.get("timestamp"))
-inv_key = (
-    clean_value(selected_anomaly.get("inverter_id"))
-    if "inverter_id" in selected_anomaly.index
-    else None
-)
-anomaly_key = f"{ts_key}|{inv_key}"
+event_key = clean_value(selected_event.get("event_id"))
+inv_key = clean_value(selected_event.get("inverter_id"))
+
+anomaly_key = f"{event_key}|{inv_key}"
 cached = st.session_state["ai_explanations"].get(anomaly_key)
 
 if regenerate or cached is None:
@@ -1136,9 +1223,9 @@ if regenerate or cached is None:
 
         try:
             ai_explanation, ai_evidence = generate_ai_explanation(
-                selected_anomaly
+                selected_event,
+                event_rows
             )
-
             cached = {
                 "explanation": ai_explanation,
                 "evidence": ai_evidence,
@@ -1161,7 +1248,7 @@ if regenerate or cached is None:
 # ------------------------------------------------------------
 
 if cached is None:
-    st.info("Select an anomaly to generate an AI explanation.")
+    st.info("Select an anomaly event to generate an AI explanation.")
 
 elif cached.get("error"):
 
@@ -1178,7 +1265,7 @@ elif cached.get("explanation"):
 else:
 
     st.warning(
-        "Groq did not return an explanation for this anomaly."
+        "AI did not return an explanation for this anomaly event."
     )
 
 # ------------------------------------------------------------
@@ -1187,35 +1274,68 @@ else:
 st.markdown("## Investigate an Anomaly")
 st.caption("Select one detected anomaly to inspect its preceding trend, contributing parameters, and AI explanation.")
 
-if len(anomaly_df) > 0:
-    anomaly_df = anomaly_df.sort_values("timestamp").reset_index(drop=True)
+if len(events_df) > 0:
 
-    selected_index = st.selectbox(
-        "Select an anomaly",
-        range(len(anomaly_df)),
-        format_func=lambda x: fmt_time(anomaly_df.loc[x, "timestamp"]),
-    )
-    selected_anomaly = anomaly_df.loc[selected_index]
+    selected_event = events_df.loc[selected_event_index]
+
+    event_rows = anomaly_df[
+        (anomaly_df["inverter_id"] == selected_event["inverter_id"]) &
+        (anomaly_df["timestamp"] >= selected_event["start_time"]) &
+        (anomaly_df["timestamp"] <= selected_event["end_time"])
+    ].copy()]
 
     inv_cols = st.columns(3)
     with inv_cols[0]:
-        st.metric("Time", fmt_time(selected_anomaly.get("timestamp")))
+        st.metric(
+            "Event Start",
+            fmt_time(selected_event.get("start_time"))
+        )
+    
     with inv_cols[1]:
-        st.metric("Severity", fmt_num(selected_anomaly.get("anomaly_score_ratio"), 2, "×"))
+        st.metric(
+            "Event Duration",
+            fmt_num(selected_event.get("duration_min"), 1, " min")
+        )
+    
     with inv_cols[2]:
         st.metric(
-            "Inverter Temperature",
-            fmt_num(selected_anomaly.get("inverter_temperature_c"), 1, " °C"),
+            "Anomaly Points",
+            f"{int(selected_event.get('anomaly_count', 0)):,}"
+        )
+
+    severity_cols = st.columns(3)
+    with severity_cols[0]:
+        st.metric(
+            "Maximum Severity",
+            fmt_num(
+                selected_event.get("max_severity"),
+                2,
+                "×"
+            )
+        )
+    with severity_cols[1]:
+        st.metric(
+            "Mean Severity",
+            fmt_num(
+                selected_event.get("mean_severity"),
+                2,
+                "×"
+            )
+        )
+    with severity_cols[2]:
+        st.metric(
+            "Status",
+            str(selected_event.get("dominant_status", "—"))
         )
 
     detail_col1, detail_col2 = st.columns(2)
-
     with detail_col1:
         st.markdown("### What Happened Before")
         st.caption("Power and temperature in the 24 hours leading up to the anomaly.")
 
-        end_time = pd.to_datetime(selected_anomaly["timestamp"])
-        trend_window, window_start = get_trend_window(trend_df, end_time, hours_back=24)
+        event_start = pd.to_datetime(selected_event["start_time"])
+        event_end = pd.to_datetime(selected_event["end_time"])
+        trend_window, window_start = get_trend_window(trend_df,event_start,hours_back=24)
 
         if len(trend_window) > 1:
             fig_trend = go.Figure()
@@ -1241,8 +1361,12 @@ if len(anomaly_df) > 0:
                         line=dict(color="#E45756"),
                     )
                 )
-            fig_trend.add_vline(
-                x=end_time, line_dash="dash", line_width=2, line_color="#B10318"
+            fig_trend.add_vrect(
+                x0=event_start,
+                x1=event_end,
+                fillcolor="red",
+                opacity=0.12,
+                line_width=1,
             )
             fig_trend.update_layout(
                 xaxis=dict(title="Time"),
@@ -1267,7 +1391,7 @@ if len(anomaly_df) > 0:
 
         contribution_cols = get_contribution_cols(anomaly_df)
         if contribution_cols:
-            contrib_values = selected_anomaly[contribution_cols].dropna()
+            contrib_values = (event_rows[contribution_cols].mean().dropna())
             if len(contrib_values) > 0:
                 contrib_plot_df = pd.DataFrame(
                     {
@@ -1314,28 +1438,57 @@ else:
 st.markdown("## Detected Anomalies")
 st.caption("Observations flagged by the anomaly detector in the selected period.")
 
-if len(anomaly_df) > 0:
-    display_columns = [
-        "timestamp",
-        "anomaly_score_ratio",
-        "inverter_temperature_c",
-        "dc_power_kw",
+if len(events_df) > 0:
+
+    event_table = events_df.copy()
+
+    event_table["Event"] = [
+        f"Event {i + 1}"
+        for i in range(len(event_table))
     ]
-    display_columns = [c for c in display_columns if c in anomaly_df.columns]
+
+    display_columns = [
+        "Event",
+        "start_time",
+        "end_time",
+        "duration_min",
+        "anomaly_count",
+        "max_severity",
+        "dominant_status",
+    ]
+
+    display_columns = [
+        c for c in display_columns
+        if c in event_table.columns
+    ]
+
     friendly_names = {
-        "timestamp": "Time",
-        "anomaly_score_ratio": "Severity",
-        "inverter_temperature_c": "Inverter Temp (°C)",
-        "dc_power_kw": "DC Power (kW)",
+        "start_time": "Start",
+        "end_time": "End",
+        "duration_min": "Duration (min)",
+        "anomaly_count": "Anomaly Points",
+        "max_severity": "Max Severity",
+        "dominant_status": "Status",
     }
-    table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
-    st.dataframe(table, width="stretch", hide_index=True)
+
+    table = (
+        event_table[display_columns]
+        .rename(columns=friendly_names)
+        .sort_values("Start")
+    )
+
+    st.dataframe(
+        table,
+        width="stretch",
+        hide_index=True
+    )
+
 else:
     if total_observations > 0:
         st.success(
-            "✅ No anomalies in this period — the inverter behaved normally "
-            f"across all {total_observations:,} readings."
+            "✅ No anomaly events were detected in this period."
         )
     else:
-        st.info("No readings in this date range. Try a different range above.")
-
+        st.info(
+            "No readings in this date range. Try a different range above."
+        )
