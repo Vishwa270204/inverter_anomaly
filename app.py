@@ -1665,7 +1665,7 @@ if len(events_df) > 0:
     table = (
         event_table[display_columns]
         .rename(columns=friendly_names)
-        .sort_values("Start")
+        .sort_values("Start Time")
     )
 
     st.dataframe(
