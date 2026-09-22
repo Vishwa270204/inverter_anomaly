@@ -17,6 +17,9 @@ import os
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+DISPLAY_TZ = ZoneInfo("Asia/Kolkata")
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -318,7 +321,11 @@ st.session_state.setdefault("ai_explanations", {})
 def load_dashboard_data(path="dashboard_data.parquet"):
     df = pd.read_parquet(path)
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    df = df.dropna(subset=["timestamp"])
+    if df["timestamp"].dt.tz is None:
+        df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
+    df["timestamp"] = df["timestamp"].dt.tz_convert(DISPLAY_TZ)
+    df = df.sort_values("timestamp").reset_index(drop=True)
     if "anomaly_flag" in df.columns:
         df["anomaly_flag"] = df["anomaly_flag"].fillna(False).astype(bool)
     else:
@@ -329,7 +336,11 @@ def load_dashboard_data(path="dashboard_data.parquet"):
 def load_trend_data(path="trend_data.parquet"):
     df = pd.read_parquet(path)
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    df = df.dropna(subset=["timestamp"])
+    if df["timestamp"].dt.tz is None:
+        df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
+    df["timestamp"] = df["timestamp"].dt.tz_convert(DISPLAY_TZ)
+    df = df.sort_values("timestamp").reset_index(drop=True)
     return df
 
 @st.cache_data
@@ -402,16 +413,10 @@ def fmt_num(value, decimals=2, suffix="", dash="—"):
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return dash
     return f"{value:,.{decimals}f}{suffix}"
-
-DISPLAY_TZ = ZoneInfo("Asia/Kolkata")
 def fmt_time(value, dash="—"):
     if value is None or pd.isna(value):
         return dash
-    ts = pd.to_datetime(value)
-    if ts.tzinfo is None:
-        ts = ts.tz_localize("UTC")
-    ts = ts.tz_convert(DISPLAY_TZ)
-    return ts.strftime("%Y-%m-%d %H:%M")
+    return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M")
 
 
 def get_trend_window(source, end_time, hours_back=24):
