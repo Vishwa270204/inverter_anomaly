@@ -1088,90 +1088,91 @@ if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
 else:
     st.info("No anomaly score data available for the selected period.")
 
+if len(anomaly_df) > 0:
  # --------------------------------------------------------
     # AI EXPLANATION
     # --------------------------------------------------------
     ai_header_col, ai_button_col = st.columns([7, 1.35])
 
     with ai_header_col:
-        st.markdown(
-            '<div class="ai-title">AI Explanation</div>',
-            unsafe_allow_html=True,
-        )
+       st.markdown(
+           '<div class="ai-title">AI Explanation</div>',
+           unsafe_allow_html=True,
+       )
 
     with ai_button_col:
-        regenerate = st.button(
-            "Regenerate",
-            type="primary",
-            use_container_width=True,
-            help="Generate a fresh explanation for this anomaly.",
-        )
+       regenerate = st.button(
+           "Regenerate",
+           type="primary",
+           use_container_width=True,
+           help="Generate a fresh explanation for this anomaly.",
+       )
 
     ts_key = clean_value(selected_anomaly.get("timestamp"))
     inv_key = (
-        clean_value(selected_anomaly.get("inverter_id"))
-        if "inverter_id" in selected_anomaly.index
-        else None
+       clean_value(selected_anomaly.get("inverter_id"))
+       if "inverter_id" in selected_anomaly.index
+       else None
     )
     anomaly_key = f"{ts_key}|{inv_key}"
     cached = st.session_state["ai_explanations"].get(anomaly_key)
 
     if regenerate or cached is None:
 
-        with st.spinner("Generating explanation from the anomaly evidence..."):
+       with st.spinner("Generating explanation from the anomaly evidence..."):
 
-            try:
-                ai_explanation, ai_evidence = generate_ai_explanation(
-                    selected_anomaly
-                )
+           try:
+               ai_explanation, ai_evidence = generate_ai_explanation(
+                   selected_anomaly
+               )
 
-                cached = {
-                    "explanation": ai_explanation,
-                    "evidence": ai_evidence,
-                    "error": None,
-                }
+               cached = {
+                   "explanation": ai_explanation,
+                   "evidence": ai_evidence,
+                   "error": None,
+               }
 
-            except Exception as e:
+           except Exception as e:
 
-                cached = {
-                    "explanation": None,
-                    "evidence": None,
-                    "error": str(e),
-                }
+               cached = {
+                   "explanation": None,
+                   "evidence": None,
+                   "error": str(e),
+               }
 
-            st.session_state["ai_explanations"][anomaly_key] = cached
+           st.session_state["ai_explanations"][anomaly_key] = cached
 
 
-        # ------------------------------------------------------------
-        # ALWAYS RENDER AN AI RESULT AREA
-        # ------------------------------------------------------------
+       # ------------------------------------------------------------
+       # ALWAYS RENDER AN AI RESULT AREA
+       # ------------------------------------------------------------
     
-        if cached is None:
-            st.info("Select an anomaly to generate an AI explanation.")
+       if cached is None:
+           st.info("Select an anomaly to generate an AI explanation.")
     
-        elif cached.get("error"):
+       elif cached.get("error"):
     
-            st.error(
-                f"AI explanation failed: {cached['error']}"
-            )
+           st.error(
+               f"AI explanation failed: {cached['error']}"
+           )
     
-        elif cached.get("explanation"):
+       elif cached.get("explanation"):
     
-            render_ai_explanation(
-                cached["explanation"]
-            )
+           render_ai_explanation(
+               cached["explanation"]
+           )
     
-        else:
+       else:
     
-            st.warning(
-                "Groq did not return an explanation for this anomaly."
-            )
+           st.warning(
+               "Groq did not return an explanation for this anomaly."
+           )
 else:
-        st.info(
-            "Nothing to investigate here — there are no anomalies in the selected "
-            "date range. Widen the date range or clear **Show anomalies only** "
-            "to bring up more data."
-        )
+    st.info(
+        "Nothing to investigate here — there are no anomalies in the selected "
+        "date range. Widen the date range or clear **Show anomalies only** "
+        "to bring up more data."
+    )
 
 # ------------------------------------------------------------
 # DETECTED ANOMALIES
