@@ -660,8 +660,6 @@ def get_baseline_context(timestamp, inverter_id=None):
     return result
 
 
-
-
 def generate_ai_explanation(selected_anomaly):
     """
     Generate one explanation for the currently selected anomaly.
@@ -969,7 +967,11 @@ if filtered_df.empty and filtered_trend_df.empty:
 total_observations = len(filtered_df)
 total_anomalies = int(filtered_df["anomaly_flag"].sum()) if total_observations else 0
 anomaly_rate = (total_anomalies / total_observations * 100) if total_observations else None
-
+max_temperature = (
+    filtered_df["inverter_temperature_c"].max()
+    if "inverter_temperature_c" in filtered_df.columns and total_observations
+    else None
+)
 
 anomaly_df = (
     filtered_df[filtered_df["anomaly_flag"]].copy() if total_observations else filtered_df.copy()
@@ -1088,90 +1090,174 @@ if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
 else:
     st.info("No anomaly score data available for the selected period.")
 
+# ------------------------------------------------------------
+# AI EXPLANATION
+# ------------------------------------------------------------
 if len(anomaly_df) > 0:
- # --------------------------------------------------------
-    # AI EXPLANATION
-    # --------------------------------------------------------
-    ai_header_col, ai_button_col = st.columns([7, 1.35])
-
-    with ai_header_col:
-       st.markdown(
-           '<div class="ai-title">AI Explanation</div>',
-           unsafe_allow_html=True,
-       )
-
-    with ai_button_col:
-       regenerate = st.button(
-           "Regenerate",
-           type="primary",
-           use_container_width=True,
-           help="Generate a fresh explanation for this anomaly.",
-       )
-
-    ts_key = clean_value(selected_anomaly.get("timestamp"))
-    inv_key = (
-       clean_value(selected_anomaly.get("inverter_id"))
-       if "inverter_id" in selected_anomaly.index
-       else None
+    anomaly_df = anomaly_df.sort_values("timestamp").reset_index(drop=True)
+    selected_index = st.selectbox(
+        "Select an anomaly for AI explanation",
+        range(len(anomaly_df)),
+        format_func=lambda x: fmt_time(anomaly_df.loc[x, "timestamp"]),
+        key="ai_anomaly_selector",
     )
-    anomaly_key = f"{ts_key}|{inv_key}"
-    cached = st.session_state["ai_explanations"].get(anomaly_key)
-
-    if regenerate or cached is None:
-
-       with st.spinner("Generating explanation from the anomaly evidence..."):
-
-           try:
-               ai_explanation, ai_evidence = generate_ai_explanation(
-                   selected_anomaly
-               )
-
-               cached = {
-                   "explanation": ai_explanation,
-                   "evidence": ai_evidence,
-                   "error": None,
-               }
-
-           except Exception as e:
-
-               cached = {
-                   "explanation": None,
-                   "evidence": None,
-                   "error": str(e),
-               }
-
-           st.session_state["ai_explanations"][anomaly_key] = cached
+    selected_anomaly = anomaly_df.loc[selected_index]
 
 
-       # ------------------------------------------------------------
-       # ALWAYS RENDER AN AI RESULT AREA
-       # ------------------------------------------------------------
-    
-       if cached is None:
-           st.info("Select an anomaly to generate an AI explanation.")
-    
-       elif cached.get("error"):
-    
-           st.error(
-               f"AI explanation failed: {cached['error']}"
-           )
-    
-       elif cached.get("explanation"):
-    
-           render_ai_explanation(
-               cached["explanation"]
-           )
-    
-       else:
-    
-           st.warning(
-               "Groq did not return an explanation for this anomaly."
-           )
+# --------------------------------------------------------
+ai_header_col, ai_button_col = st.columns([7, 1.35])
+
+with ai_header_col:
+    st.markdown(
+        '<div class="ai-title">AI Explanation</div>',
+        unsafe_allow_html=True,
+    )
+
+with ai_button_col:
+    regenerate = st.button(
+        "Regenerate",
+        type="primary",
+        use_container_width=True,
+        help="Generate a fresh explanation for this anomaly.",
+    )
+
+ts_key = clean_value(selected_anomaly.get("timestamp"))
+inv_key = (
+    clean_value(selected_anomaly.get("inverter_id"))
+    if "inverter_id" in selected_anomaly.index
+    else None
+)
+anomaly_key = f"{ts_key}|{inv_key}"
+cached = st.session_state["ai_explanations"].get(anomaly_key)
+
+if regenerate or cached is None:
+
+    with st.spinner("Generating explanation from the anomaly evidence..."):
+
+        try:
+            ai_explanation, ai_evidence = generate_ai_explanation(
+                selected_anomaly
+            )
+
+            cached = {
+                "explanation": ai_explanation,
+                "evidence": ai_evidence,
+                "error": None,
+            }
+
+        except Exception as e:
+
+            cached = {
+                "explanation": None,
+                "evidence": None,
+                "error": str(e),
+            }
+
+        st.session_state["ai_explanations"][anomaly_key] = cached
+
+
+# ------------------------------------------------------------
+# ALWAYS RENDER AN AI RESULT AREA
+# ------------------------------------------------------------
+
+if cached is None:
+    st.info("Select an anomaly to generate an AI explanation.")
+
+elif cached.get("error"):
+
+    st.error(
+        f"AI explanation failed: {cached['error']}"
+    )
+
+elif cached.get("explanation"):
+
+    render_ai_explanation(
+        cached["explanation"]
+    )
+
 else:
-    st.info(
-        "Nothing to investigate here — there are no anomalies in the selected "
-        "date range. Widen the date range or clear **Show anomalies only** "
-        "to bring up more data."
+
+    st.warning(
+        "Groq did not return an explanation for this anomaly."
+    )
+
+# --------------------------------------------------------
+# AI EXPLANATION
+# --------------------------------------------------------
+ai_header_col, ai_button_col = st.columns([7, 1.35])
+
+with ai_header_col:
+    st.markdown(
+        '<div class="ai-title">AI Explanation</div>',
+        unsafe_allow_html=True,
+    )
+
+with ai_button_col:
+    regenerate = st.button(
+        "Regenerate",
+        type="primary",
+        use_container_width=True,
+        help="Generate a fresh explanation for this anomaly.",
+    )
+
+ts_key = clean_value(selected_anomaly.get("timestamp"))
+inv_key = (
+    clean_value(selected_anomaly.get("inverter_id"))
+    if "inverter_id" in selected_anomaly.index
+    else None
+)
+anomaly_key = f"{ts_key}|{inv_key}"
+cached = st.session_state["ai_explanations"].get(anomaly_key)
+
+if regenerate or cached is None:
+
+    with st.spinner("Generating explanation from the anomaly evidence..."):
+
+        try:
+            ai_explanation, ai_evidence = generate_ai_explanation(
+                selected_anomaly
+            )
+
+            cached = {
+                "explanation": ai_explanation,
+                "evidence": ai_evidence,
+                "error": None,
+            }
+
+        except Exception as e:
+
+            cached = {
+                "explanation": None,
+                "evidence": None,
+                "error": str(e),
+            }
+
+        st.session_state["ai_explanations"][anomaly_key] = cached
+
+
+# ------------------------------------------------------------
+# ALWAYS RENDER AN AI RESULT AREA
+# ------------------------------------------------------------
+
+if cached is None:
+    st.info("Select an anomaly to generate an AI explanation.")
+
+elif cached.get("error"):
+
+    st.error(
+        f"AI explanation failed: {cached['error']}"
+    )
+
+elif cached.get("explanation"):
+
+    render_ai_explanation(
+        cached["explanation"]
+    )
+
+else:
+
+    st.warning(
+        "Groq did not return an explanation for this anomaly."
     )
 
 # ------------------------------------------------------------
@@ -1324,4 +1410,10 @@ if len(anomaly_df) > 0:
 
     st.divider()
 
-   
+
+else:
+    st.info(
+        "Nothing to investigate here — there are no anomalies in the selected "
+        "date range. Widen the date range or clear **Show anomalies only** "
+        "to bring up more data."
+    )
