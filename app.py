@@ -457,22 +457,29 @@ def row_to_dict(row):
 def get_anomaly_details(timestamp):
     target = pd.to_datetime(timestamp)
     source = df.copy()
-    if inverter_id is not None and "inverter_id" in source.columns:
-        source = source[source["inverter_id"].astype(str) == str(inverter_id)]
     if source.empty:
-        return {"error": "No matching inverter data found."}
-    idx = (source["timestamp"] - target).abs().idxmin()
+        return {"error": "No inverter data available."}
+    idx = (
+        source["timestamp"] - target
+    ).abs().idxmin()
     return row_to_dict(source.loc[idx])
 
 
 def get_pre_anomaly_trend(timestamp, hours=24):
     target = pd.to_datetime(timestamp)
+
     start = target - timedelta(hours=float(hours))
-    source = trend_df[(trend_df["timestamp"] >= start) & (trend_df["timestamp"] <= target)].copy()
-    if inverter_id is not None and "inverter_id" in source.columns:
-        source = source[source["inverter_id"].astype(str) == str(inverter_id)]
+
+    source = trend_df[
+        (trend_df["timestamp"] >= start) &
+        (trend_df["timestamp"] <= target)
+    ].copy()
+
     if source.empty:
-        return {"error": "No trend observations found for the requested window."}
+        return {
+            "error": "No trend observations found for the requested window."
+        }
+
     numeric = [
         c
         for c in [
@@ -488,25 +495,39 @@ def get_pre_anomaly_trend(timestamp, hours=24):
         ]
         if c in source.columns
     ]
+
     stats = {}
+
     for col in numeric:
-        series = pd.to_numeric(source[col], errors="coerce").dropna()
+
+        series = pd.to_numeric(
+            source[col],
+            errors="coerce"
+        ).dropna()
+
         if len(series) >= 2:
+
             stats[col] = {
                 "start": clean_value(series.iloc[0]),
                 "end": clean_value(series.iloc[-1]),
-                "net_change": clean_value(series.iloc[-1] - series.iloc[0]),
+                "net_change": clean_value(
+                    series.iloc[-1] - series.iloc[0]
+                ),
                 "min": clean_value(series.min()),
                 "max": clean_value(series.max()),
                 "median": clean_value(series.median()),
             }
+
     return {
-        "window_start": clean_value(source["timestamp"].min()),
-        "window_end": clean_value(source["timestamp"].max()),
+        "window_start": clean_value(
+            source["timestamp"].min()
+        ),
+        "window_end": clean_value(
+            source["timestamp"].max()
+        ),
         "observations": int(len(source)),
         "statistics": stats,
     }
-
 
 def get_feature_contributions(timestamp, inverter_id=None):
     target = pd.to_datetime(timestamp)
@@ -534,18 +555,22 @@ def get_feature_contributions(timestamp, inverter_id=None):
     }
 
 
-def get_operating_context(timestamp, inverter_id=None):
+def get_operating_context(timestamp):
     target = pd.to_datetime(timestamp)
+
     source = df.copy()
-    if inverter_id is not None and "inverter_id" in source.columns:
-        source = source[source["inverter_id"].astype(str) == str(inverter_id)]
+
     if source.empty:
-        return {"error": "No matching data found."}
-    idx = (source["timestamp"] - target).abs().idxmin()
+        return {"error": "No inverter data available."}
+
+    idx = (
+        source["timestamp"] - target
+    ).abs().idxmin()
+
     row = source.loc[idx]
+
     wanted = [
         "timestamp",
-        "inverter_id",
         "hour",
         "minute",
         "month",
@@ -562,45 +587,58 @@ def get_operating_context(timestamp, inverter_id=None):
         "ambient_temperature_c",
         "poa_w_m2",
         "ghi_w_m2",
-        "quality_code_inv",
-        "communication_status_inv",
+        "quality_code",
+        "communication_status",
+        "fault_code",
+        "alarm_code",
     ]
-    return {k: clean_value(row.get(k)) for k in wanted if k in source.columns}
-def get_baseline_context(timestamp, inverter_id=None):
+
+    return {
+        k: clean_value(row.get(k))
+        for k in wanted
+        if k in source.columns
+    }
+def get_baseline_context(timestamp):
     """
-    Retrieve healthy reference values for conditions similar to the
-    selected anomaly.
+    Retrieve healthy reference values for conditions similar to
+    the selected event.
 
     This is a comparison reference only. It does not establish cause.
     """
+
     target = pd.to_datetime(timestamp)
 
     source = df.copy()
 
-    if inverter_id is not None and "inverter_id" in source.columns:
-        source = source[
-            source["inverter_id"].astype(str) == str(inverter_id)
-        ]
-
     if source.empty:
-        return {"error": "No matching inverter data found."}
+        return {
+            "error": "No inverter data available."
+        }
 
-    idx = (source["timestamp"] - target).abs().idxmin()
+    idx = (
+        source["timestamp"] - target
+    ).abs().idxmin()
+
     row = source.loc[idx]
 
     conditions = {
-        "inverter_id": clean_value(row.get("inverter_id")),
-        "inverter_status": clean_value(row.get("inverter_status")),
-        "is_daylight": clean_value(row.get("is_daylight")),
-        "hour": clean_value(row.get("hour")),
-        "month": clean_value(row.get("month")),
+        "inverter_status": clean_value(
+            row.get("inverter_status")
+        ),
+        "is_daylight": clean_value(
+            row.get("is_daylight")
+        ),
+        "hour": clean_value(
+            row.get("hour")
+        ),
+        "month": clean_value(
+            row.get("month")
+        ),
     }
 
     baseline = baseline_df.copy()
 
-    # Match the most specific available healthy condition first.
     match_cols = [
-        "inverter_id",
         "inverter_status",
         "is_daylight",
         "hour",
@@ -608,20 +646,28 @@ def get_baseline_context(timestamp, inverter_id=None):
     ]
 
     match_cols = [
-        c for c in match_cols
-        if c in baseline.columns and conditions.get(c) is not None
+        c
+        for c in match_cols
+        if c in baseline.columns
+        and conditions.get(c) is not None
     ]
 
     matched = baseline.copy()
 
     for col in match_cols:
+
         matched = matched[
-            matched[col].astype(str) == str(conditions[col])
+            matched[col].astype(str)
+            == str(conditions[col])
         ]
 
     if matched.empty:
+
         return {
-            "error": "No healthy baseline group is available for the selected operating conditions.",
+            "error": (
+                "No healthy baseline group is available "
+                "for the selected operating conditions."
+            ),
             "conditions": conditions,
         }
 
@@ -640,31 +686,39 @@ def get_baseline_context(timestamp, inverter_id=None):
     })
 
     for metric in metric_names:
+
         median_col = f"{metric}_median"
         q10_col = f"{metric}_q10"
         q90_col = f"{metric}_q90"
 
-        values = matched[[median_col, q10_col, q90_col]].dropna(
-            how="all"
-        )
+        values = matched[
+            [median_col, q10_col, q90_col]
+        ].dropna(how="all")
 
         if values.empty:
             continue
 
         result["reference"][metric] = {
-            "median": clean_value(values[median_col].iloc[0]),
-            "typical_low_q10": clean_value(values[q10_col].iloc[0]),
-            "typical_high_q90": clean_value(values[q90_col].iloc[0]),
+            "median": clean_value(
+                values[median_col].iloc[0]
+            ),
+            "typical_low_q10": clean_value(
+                values[q10_col].iloc[0]
+            ),
+            "typical_high_q90": clean_value(
+                values[q90_col].iloc[0]
+            ),
         }
 
     return result
-
-
 def generate_ai_explanation(selected_event, event_rows):
-    event_start = selected_event["start_time"]
-    event_end = selected_event["end_time"]
-    event_duration = selected_event["duration_min"]
-    anomaly_count = selected_event["anomaly_count"]
+    """
+    Generate one explanation for a complete anomaly event.
+
+    One event = continuous occurrence of anomaly observations.
+    Python collects the event evidence first. Groq is used only
+    to convert that evidence into a concise natural-language explanation.
+    """
 
     client = get_groq_client()
 
@@ -675,106 +729,271 @@ def generate_ai_explanation(selected_event, event_rows):
         )
 
     # ------------------------------------------------------------
-    # 0. RESOLVE THE SCALAR TIMESTAMP / INVERTER ID UP FRONT
+    # 1. EVENT INFORMATION
     # ------------------------------------------------------------
-    # NOTE: this used to be computed *after* the evidence-gathering block
-    # below, which meant every get_* call was accidentally passed the
-    # whole `selected_anomaly` Series as `timestamp` instead of a scalar.
-    # pd.to_datetime() on a full row tries to convert every value in it
-    # (including the numpy.bool_ anomaly_flag), which is exactly the
-    # "<class 'numpy.bool'> is not convertible to datetime" error. Moving
-    # this up and passing the scalars explicitly fixes it.
-    timestamp = clean_value(selected_anomaly.get("timestamp"))
-    inverter_id = (
-        clean_value(selected_anomaly.get("inverter_id"))
-        if "inverter_id" in selected_anomaly.index
-        else None
-    )
+
+    event_start = clean_value(selected_event.get("start_time"))
+    event_end = clean_value(selected_event.get("end_time"))
+    event_duration = clean_value(selected_event.get("duration_min"))
+    anomaly_count = clean_value(selected_event.get("anomaly_count"))
 
     # ------------------------------------------------------------
-    # 1. COLLECT ALL EVIDENCE IN PYTHON
+    # 2. COLLECT EVENT EVIDENCE
     # ------------------------------------------------------------
-    evidence = {}
 
-    # Use the existing evidence/tool functions already defined in the app.
-    # These functions are deterministic and do not call the LLM.
-    try:
-        evidence = get_anomaly_details(timestamp, inverter_id)
-    except Exception as e:
-        evidence["anomaly_details_error"] = str(e)
+    evidence = {
+        "event": {
+            "event_id": clean_value(selected_event.get("event_id")),
+            "start_time": event_start,
+            "end_time": event_end,
+            "duration_min": event_duration,
+            "anomaly_count": anomaly_count,
+            "max_severity": clean_value(
+                selected_event.get("max_severity")
+            ),
+            "mean_severity": clean_value(
+                selected_event.get("mean_severity")
+            ),
+            "dominant_status": clean_value(
+                selected_event.get("dominant_status")
+            ),
+            "anomaly_type": clean_value(
+                selected_event.get("anomaly_type")
+            ),
+        }
+    }
 
-    try:
-        trend = get_pre_anomaly_trend(timestamp, inverter_id)
-        evidence["pre_anomaly_trend"] = trend
-    except Exception as e:
-        evidence["pre_anomaly_trend_error"] = str(e)
+    # ------------------------------------------------------------
+    # 3. EVENT OBSERVATIONS
+    # ------------------------------------------------------------
 
-    try:
-        contributions = get_feature_contributions(timestamp, inverter_id)
-        evidence["feature_contributions"] = contributions
-    except Exception as e:
-        evidence["feature_contributions_error"] = str(e)
+    if event_rows is not None and not event_rows.empty:
 
-    try:
-        operating_context = get_operating_context(timestamp, inverter_id)
+        numeric_cols = [
+            "dc_power_kw",
+            "dc_current_a",
+            "ac_power_kw",
+            "ac_current_a",
+            "power_factor",
+            "frequency_hz",
+            "efficiency_pct",
+            "inverter_temperature_c",
+            "ambient_temperature_c",
+            "poa_w_m2",
+            "ghi_w_m2",
+            "packet_loss_pct",
+            "communication_latency_ms",
+        ]
+
+        event_statistics = {}
+
+        for col in numeric_cols:
+
+            if col not in event_rows.columns:
+                continue
+
+            series = pd.to_numeric(
+                event_rows[col],
+                errors="coerce"
+            ).dropna()
+
+            if len(series) == 0:
+                continue
+
+            event_statistics[col] = {
+                "start": clean_value(series.iloc[0]),
+                "end": clean_value(series.iloc[-1]),
+                "min": clean_value(series.min()),
+                "max": clean_value(series.max()),
+                "mean": clean_value(series.mean()),
+                "median": clean_value(series.median()),
+            }
+
+        evidence["event_observations"] = {
+            "observation_count": int(len(event_rows)),
+            "statistics": event_statistics,
+        }
+
+        # --------------------------------------------------------
+        # 4. OPERATING CONDITIONS DURING EVENT
+        # --------------------------------------------------------
+
+        context_columns = [
+            "inverter_status",
+            "is_daylight",
+            "hour",
+            "month",
+            "quality_code",
+            "communication_status",
+            "fault_code",
+            "alarm_code",
+        ]
+
+        operating_context = {}
+
+        for col in context_columns:
+
+            if col not in event_rows.columns:
+                continue
+
+            values = (
+                event_rows[col]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            if values:
+                operating_context[col] = values
+
         evidence["operating_context"] = operating_context
-    except Exception as e:
-        evidence["operating_context_error"] = str(e)
+
+        # --------------------------------------------------------
+        # 5. FEATURE CONTRIBUTIONS
+        # --------------------------------------------------------
+
+        contribution_cols = get_contribution_cols(event_rows)
+
+        if contribution_cols:
+
+            contribution_values = (
+                event_rows[contribution_cols]
+                .apply(pd.to_numeric, errors="coerce")
+                .mean()
+                .dropna()
+                .sort_values(ascending=False)
+            )
+
+            evidence["feature_contributions"] = [
+                {
+                    "feature": col.replace(
+                        "_contribution_pct",
+                        ""
+                    ),
+                    "mean_contribution_pct": clean_value(value),
+                }
+                for col, value in contribution_values.head(5).items()
+            ]
+
+        # --------------------------------------------------------
+        # 6. PRE-EVENT TREND
+        # --------------------------------------------------------
+
+        trend, _ = get_trend_window(
+            trend_df,
+            pd.to_datetime(event_start),
+            hours_back=24,
+        )
+
+        if not trend.empty:
+
+            trend_statistics = {}
+
+            trend_columns = [
+                "dc_power_kw",
+                "ac_power_kw",
+                "dc_current_a",
+                "ac_current_a",
+                "inverter_temperature_c",
+                "efficiency_pct",
+                "power_factor",
+            ]
+
+            for col in trend_columns:
+
+                if col not in trend.columns:
+                    continue
+
+                series = pd.to_numeric(
+                    trend[col],
+                    errors="coerce"
+                ).dropna()
+
+                if len(series) >= 2:
+
+                    trend_statistics[col] = {
+                        "start": clean_value(series.iloc[0]),
+                        "end": clean_value(series.iloc[-1]),
+                        "min": clean_value(series.min()),
+                        "max": clean_value(series.max()),
+                        "median": clean_value(series.median()),
+                    }
+
+            evidence["pre_event_trend"] = {
+                "window_start": clean_value(
+                    trend["timestamp"].min()
+                ),
+                "window_end": clean_value(
+                    trend["timestamp"].max()
+                ),
+                "observations": int(len(trend)),
+                "statistics": trend_statistics,
+            }
+
+    # ------------------------------------------------------------
+    # 7. HEALTHY BASELINE
+    # ------------------------------------------------------------
 
     try:
-        baseline = get_baseline_context(timestamp, inverter_id)
-        evidence["healthy_baseline"] = baseline
+
+        if event_rows is not None and not event_rows.empty:
+
+            reference_row = event_rows.iloc[0]
+
+            baseline = get_baseline_context(
+                reference_row["timestamp"]
+            )
+
+            evidence["healthy_baseline"] = baseline
+
     except Exception as e:
+
         evidence["healthy_baseline_error"] = str(e)
 
     # ------------------------------------------------------------
-    # 2. ASK GROQ ONLY FOR THE FINAL EXPLANATION
+    # 8. AI PROMPT
     # ------------------------------------------------------------
-    # GPT-OSS is a reasoning model. Keep the instruction and evidence in
-    # one user message, disable returned reasoning, and give the model enough
-    # completion budget for BOTH reasoning and the final paragraph.
+
     prompt = """
-You are the explanation assistant inside an inverter anomaly detection
-dashboard.
+You are the explanation assistant inside an inverter anomaly detection dashboard.
 
 Generate ONE concise factual paragraph from the supplied evidence.
 
 Rules:
-- Use only the supplied evidence. Never invent measurements, causes, events,
-  or trends.
-- Feature contributions mean parameters that contributed to the unusual
-  pattern; they are not automatically causes or root causes.
-- Do not automatically call an anomaly a fault.
-- Consider operating condition, daylight, power level, temperature,
-  communication condition, baseline comparison, and pre-anomaly trend when
-  available.
-- If the evidence does not establish a cause, say so.
-- Do not mention autoencoder, reconstruction error, threshold, anomaly-score
-  ratio, probability, confidence, or other internal ML details.
+- Use only the supplied evidence.
+- Never invent measurements, causes, events, or trends.
+- Feature contributions indicate parameters that contributed to the unusual
+  pattern; they are NOT automatically causes or root causes.
+- Do not automatically call the anomaly a fault.
+- Consider operating condition, daylight, power, temperature, communication
+  condition, healthy baseline, and pre-event trend when available.
+- If the evidence does not establish a cause, explicitly say that the cause
+  cannot be determined from the available evidence.
+- Do not mention autoencoder, reconstruction error, threshold,
+  anomaly-score ratio, probability, confidence, or internal ML details.
 - Do not use headings, bullets, labels, Markdown, or separate sections.
-- Return only ONE paragraph of about 4-6 sentences and preferably under
-  110 words.
-- Naturally cover what happened, when it happened, why it was flagged based
-  on the evidence, and what should be checked next.
+- Return only ONE paragraph.
+- Keep it around 4-6 sentences and preferably under 110 words.
+- Naturally explain:
+  1. what happened,
+  2. when it happened,
+  3. why the event was considered unusual based on the evidence,
+  4. what should be checked next.
 
-Selected anomaly:
-""" + json.dumps(
-        {
-            "timestamp": timestamp,
-            "inverter_id": inverter_id,
-        },
-        default=str,
-        ensure_ascii=False,
-    ) + """
-
-Evidence:
+EVENT EVIDENCE:
 """ + json.dumps(
         evidence,
         default=str,
         ensure_ascii=False,
     )
 
+    # ------------------------------------------------------------
+    # 9. GROQ REQUEST
+    # ------------------------------------------------------------
+
     try:
+
         response = client.chat.completions.create(
             model="openai/gpt-oss-20b",
             messages=[
@@ -783,26 +1002,35 @@ Evidence:
                     "content": prompt,
                 }
             ],
-            # GPT-OSS uses reasoning tokens internally. A small max_tokens
-            # budget can be consumed by reasoning before any final text is
-            # produced, which is why the old code sometimes got content="".
             reasoning_effort="low",
             include_reasoning=False,
             temperature=0.2,
             max_completion_tokens=768,
         )
-    except Exception as e:
-        raise RuntimeError(f"Groq request failed: {e}") from e
 
-    explanation = getattr(response.choices[0].message, "content", None)
+    except Exception as e:
+
+        raise RuntimeError(
+            f"Groq request failed: {e}"
+        ) from e
+
+    explanation = getattr(
+        response.choices[0].message,
+        "content",
+        None,
+    )
 
     if explanation is None:
-        raise RuntimeError("Groq returned no text content.")
+        raise RuntimeError(
+            "Groq returned no text content."
+        )
 
     explanation = str(explanation).strip()
 
     if not explanation:
-        raise RuntimeError("Groq returned an empty explanation.")
+        raise RuntimeError(
+            "Groq returned an empty explanation."
+        )
 
     return explanation, evidence
 
