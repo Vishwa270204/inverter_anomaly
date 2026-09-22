@@ -1207,7 +1207,7 @@ with ai_button_col:
 
 event_key = clean_value(selected_event.get("event_id"))
 
-anomaly_key = f"{event_key}|{inv_key}"
+anomaly_key = f"{event_key}"
 cached = st.session_state["ai_explanations"].get(anomaly_key)
 
 if regenerate or cached is None:
