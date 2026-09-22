@@ -956,37 +956,44 @@ def generate_ai_explanation(selected_event, event_rows):
     # ------------------------------------------------------------
 
     prompt = """
-You are the explanation assistant inside an inverter anomaly detection dashboard.
-
-Generate ONE concise factual paragraph from the supplied evidence.
-
-Rules:
-- Use only the supplied evidence.
-- Never invent measurements, causes, events, or trends.
-- Feature contributions indicate parameters that contributed to the unusual
-  pattern; they are NOT automatically causes or root causes.
-- Do not automatically call the anomaly a fault.
-- Consider operating condition, daylight, power, temperature, communication
-  condition, healthy baseline, and pre-event trend when available.
-- If the evidence does not establish a cause, explicitly say that the cause
-  cannot be determined from the available evidence.
-- Do not mention autoencoder, reconstruction error, threshold,
-  anomaly-score ratio, probability, confidence, or internal ML details.
-- Do not use headings, bullets, labels, Markdown, or separate sections.
-- Return only ONE paragraph.
-- Keep it around 4-6 sentences and preferably under 110 words.
-- Naturally explain:
-  1. what happened,
-  2. when it happened,
-  3. why the event was considered unusual based on the evidence,
-  4. what should be checked next.
-
-EVENT EVIDENCE:
-""" + json.dumps(
-        evidence,
-        default=str,
-        ensure_ascii=False,
-    )
+        You are an explanation assistant inside a solar inverter anomaly detection dashboard.
+        
+        Write ONE short explanation in very simple and easy-to-understand language.
+        
+        IMPORTANT RULES:
+        - Use simple words. Avoid technical/ML terms and complicated sentences.
+        - Explain the event as if you are explaining it to a plant operator.
+        - Use ONLY the supplied evidence.
+        - Never invent measurements, causes, events, or trends.
+        - Do not automatically call the anomaly a fault.
+        - Feature contributions show which parameters were unusual; they do NOT prove the root cause.
+        - If the exact cause cannot be determined, clearly say that it cannot be determined from the available data.
+        - Do not mention Autoencoder, reconstruction error, threshold, anomaly score, probability, confidence, or other internal ML details.
+        - Do not use headings or bullet points.
+        - Return ONE paragraph only.
+        - Keep the answer brief: around 4-6 sentences and preferably under 100 words.
+        
+        The explanation should naturally cover:
+        1. WHAT happened
+        2. WHEN it happened
+        3. WHY it was unusual, using the actual evidence
+        4. WHAT should be checked next
+        
+        FORMATTING:
+        - Make important information bold using Markdown **bold**.
+        - Bold important values such as the event time, affected parameters, unusual measurements, status, and recommended checks.
+        - Do not bold every word.
+        - Keep the paragraph easy to read.
+        
+        Example style:
+        "The inverter showed an unusual condition from **11:30 to 11:50 on 8 June 2025**, lasting **20 minutes**. During this period, **AC power and efficiency were lower than the healthy operating range**, while the inverter was in **RUNNING** status. The main unusual parameters were **AC power and inverter temperature**. The available data does not confirm the exact cause, so **power conditions and inverter temperature should be checked for this period**."
+        
+        EVENT EVIDENCE:
+        """ + json.dumps(
+            evidence,
+            default=str,
+            ensure_ascii=False
+        )
 
     # ------------------------------------------------------------
     # 9. GROQ REQUEST
