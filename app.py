@@ -411,7 +411,7 @@ def fmt_time(value, dash="—"):
     if ts.tzinfo is None:
         ts = ts.tz_localize("UTC")
     ts = ts.tz_convert(DISPLAY_TZ)
-    return ts.strftime("%Y-%m-%d %H:%M"
+    return ts.strftime("%Y-%m-%d %H:%M")
 
 
 def get_trend_window(source, end_time, hours_back=24):
