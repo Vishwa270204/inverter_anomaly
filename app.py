@@ -1282,7 +1282,7 @@ if len(events_df) > 0:
         (anomaly_df["inverter_id"] == selected_event["inverter_id"]) &
         (anomaly_df["timestamp"] >= selected_event["start_time"]) &
         (anomaly_df["timestamp"] <= selected_event["end_time"])
-    ].copy()]
+    ].copy()
 
     inv_cols = st.columns(3)
     with inv_cols[0]:
