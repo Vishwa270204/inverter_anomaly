@@ -1142,32 +1142,31 @@ else:
             st.session_state["ai_explanations"][anomaly_key] = cached
 
 
-    # ------------------------------------------------------------
-    # ALWAYS RENDER AN AI RESULT AREA
-    # ------------------------------------------------------------
-
-    if cached is None:
-        st.info("Select an anomaly to generate an AI explanation.")
-
-    elif cached.get("error"):
-
-        st.error(
-            f"AI explanation failed: {cached['error']}"
-        )
-
-    elif cached.get("explanation"):
-
-        render_ai_explanation(
-            cached["explanation"]
-        )
-
-    else:
-
-        st.warning(
-            "Groq did not return an explanation for this anomaly."
-        )
-
-    else:
+        # ------------------------------------------------------------
+        # ALWAYS RENDER AN AI RESULT AREA
+        # ------------------------------------------------------------
+    
+        if cached is None:
+            st.info("Select an anomaly to generate an AI explanation.")
+    
+        elif cached.get("error"):
+    
+            st.error(
+                f"AI explanation failed: {cached['error']}"
+            )
+    
+        elif cached.get("explanation"):
+    
+            render_ai_explanation(
+                cached["explanation"]
+            )
+    
+        else:
+    
+            st.warning(
+                "Groq did not return an explanation for this anomaly."
+            )
+else:
         st.info(
             "Nothing to investigate here — there are no anomalies in the selected "
             "date range. Widen the date range or clear **Show anomalies only** "
