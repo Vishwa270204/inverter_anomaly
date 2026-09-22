@@ -1160,7 +1160,7 @@ with st.container(border=True):
 # BUILD ANOMALY EVENTS
 # ============================================================
 
-def build_anomaly_events(anomaly_df, gap_minutes=5):
+def build_anomaly_events(anomaly_df, gap_minutes=6):
     """
     Group continuous anomaly observations into anomaly events.
 
@@ -1280,7 +1280,7 @@ anomaly_df = (
 # Build continuous anomaly events
 events_df = build_anomaly_events(
     anomaly_df,
-    gap_minutes=1
+    gap_minutes=6
 )
 
 
