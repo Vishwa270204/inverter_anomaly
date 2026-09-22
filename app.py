@@ -1523,31 +1523,6 @@ if len(events_df) > 0:
             f"{int(selected_event.get('anomaly_count', 0)):,}"
         )
 
-    severity_cols = st.columns(3)
-    with severity_cols[0]:
-        st.metric(
-            "Maximum Severity",
-            fmt_num(
-                selected_event.get("max_severity"),
-                2,
-                "×"
-            )
-        )
-    with severity_cols[1]:
-        st.metric(
-            "Mean Severity",
-            fmt_num(
-                selected_event.get("mean_severity"),
-                2,
-                "×"
-            )
-        )
-    with severity_cols[2]:
-        st.metric(
-            "Status",
-            str(selected_event.get("dominant_status", "—"))
-        )
-
     detail_col1, detail_col2 = st.columns(2)
     with detail_col1:
         st.markdown("### What Happened Before")
