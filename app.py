@@ -822,46 +822,46 @@ def generate_ai_explanation(selected_anomaly):
         else None
     )
 
-    system_prompt = """
+    # GPT-OSS is a reasoning model. Keep the instruction and evidence in
+    # one user message, disable returned reasoning, and give the model enough
+    # completion budget for BOTH reasoning and the final paragraph.
+    prompt = """
 You are the explanation assistant inside an inverter anomaly detection
 dashboard.
 
-Your job is ONLY to turn the supplied anomaly evidence into a concise,
-factual explanation for the dashboard user.
+Generate ONE concise factual paragraph from the supplied evidence.
 
-Important rules:
-- Explain only what the supplied evidence supports.
-- Do not invent measurements, causes, events, or trends.
-- Do not call anything a confirmed root cause unless the evidence explicitly
-  establishes causation.
-- Feature contributions indicate parameters that contributed to the unusual
-  pattern; they are NOT automatically causes.
+Rules:
+- Use only the supplied evidence. Never invent measurements, causes, events,
+  or trends.
+- Feature contributions mean parameters that contributed to the unusual
+  pattern; they are not automatically causes or root causes.
 - Do not automatically call an anomaly a fault.
 - Consider operating condition, daylight, power level, temperature,
-  communication condition, baseline comparison, and the pre-anomaly trend
-  when those fields are available.
-- If evidence is missing, say that the available data does not establish it.
-- Do not mention autoencoder, reconstruction error, threshold,
-  anomaly-score ratio, probability, confidence, or internal ML details.
+  communication condition, baseline comparison, and pre-anomaly trend when
+  available.
+- If the evidence does not establish a cause, say so.
+- Do not mention autoencoder, reconstruction error, threshold, anomaly-score
+  ratio, probability, confidence, or other internal ML details.
 - Do not use headings, bullets, labels, Markdown, or separate sections.
-- Return exactly ONE natural-language paragraph.
-- Keep it concise: about 4-6 sentences and preferably under 110 words.
-- The paragraph should naturally cover what happened, when it happened,
-  why the observation was flagged based on the evidence, and what should
-  be checked next.
-"""
+- Return only ONE paragraph of about 4-6 sentences and preferably under
+  110 words.
+- Naturally cover what happened, when it happened, why it was flagged based
+  on the evidence, and what should be checked next.
 
-    user_payload = {
-        "selected_anomaly": {
+Selected anomaly:
+""" + json.dumps(
+        {
             "timestamp": timestamp,
             "inverter_id": inverter_id,
         },
-        "evidence": evidence,
-    }
+        default=str,
+        ensure_ascii=False,
+    ) + """
 
-    # Use JSON so the model receives the complete evidence in one request.
-    evidence_json = json.dumps(
-        user_payload,
+Evidence:
+""" + json.dumps(
+        evidence,
         default=str,
         ensure_ascii=False,
     )
@@ -871,21 +871,17 @@ Important rules:
             model="openai/gpt-oss-20b",
             messages=[
                 {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
                     "role": "user",
-                    "content": (
-                        "Generate the final dashboard explanation from this "
-                        "evidence. Do not call tools. Return only the one "
-                        "paragraph explanation.\n\n"
-                        + evidence_json
-                    ),
-                },
+                    "content": prompt,
+                }
             ],
+            # GPT-OSS uses reasoning tokens internally. A small max_tokens
+            # budget can be consumed by reasoning before any final text is
+            # produced, which is why the old code sometimes got content="".
+            reasoning_effort="low",
+            include_reasoning=False,
             temperature=0.2,
-            max_tokens=220,
+            max_completion_tokens=768,
         )
     except Exception as e:
         raise RuntimeError(f"Groq request failed: {e}") from e
