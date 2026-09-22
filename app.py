@@ -1181,38 +1181,6 @@ else:
         "Groq did not return an explanation for this anomaly."
     )
 
-
-# ------------------------------------------------------------
-# DETECTED ANOMALIES
-# ------------------------------------------------------------
-st.markdown("## Detected Anomalies")
-st.caption("Observations flagged by the anomaly detector in the selected period.")
-
-if len(anomaly_df) > 0:
-    display_columns = [
-        "timestamp",
-        "anomaly_score_ratio",
-        "inverter_temperature_c",
-        "dc_power_kw",
-    ]
-    display_columns = [c for c in display_columns if c in anomaly_df.columns]
-    friendly_names = {
-        "timestamp": "Time",
-        "anomaly_score_ratio": "Severity",
-        "inverter_temperature_c": "Inverter Temp (°C)",
-        "dc_power_kw": "DC Power (kW)",
-    }
-    table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
-    st.dataframe(table, width="stretch", hide_index=True)
-else:
-    if total_observations > 0:
-        st.success(
-            "✅ No anomalies in this period — the inverter behaved normally "
-            f"across all {total_observations:,} readings."
-        )
-    else:
-        st.info("No readings in this date range. Try a different range above.")
-
 # ------------------------------------------------------------
 # INVESTIGATE AN ANOMALY
 # ------------------------------------------------------------
@@ -1339,3 +1307,35 @@ else:
         "date range. Widen the date range or clear **Show anomalies only** "
         "to bring up more data."
     )
+
+# ------------------------------------------------------------
+# DETECTED ANOMALIES
+# ------------------------------------------------------------
+st.markdown("## Detected Anomalies")
+st.caption("Observations flagged by the anomaly detector in the selected period.")
+
+if len(anomaly_df) > 0:
+    display_columns = [
+        "timestamp",
+        "anomaly_score_ratio",
+        "inverter_temperature_c",
+        "dc_power_kw",
+    ]
+    display_columns = [c for c in display_columns if c in anomaly_df.columns]
+    friendly_names = {
+        "timestamp": "Time",
+        "anomaly_score_ratio": "Severity",
+        "inverter_temperature_c": "Inverter Temp (°C)",
+        "dc_power_kw": "DC Power (kW)",
+    }
+    table = anomaly_df[display_columns].sort_values("timestamp").rename(columns=friendly_names)
+    st.dataframe(table, width="stretch", hide_index=True)
+else:
+    if total_observations > 0:
+        st.success(
+            "✅ No anomalies in this period — the inverter behaved normally "
+            f"across all {total_observations:,} readings."
+        )
+    else:
+        st.info("No readings in this date range. Try a different range above.")
+
