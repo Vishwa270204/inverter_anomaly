@@ -762,100 +762,75 @@ def execute_ai_tool(name, args):
 
 def generate_ai_explanation(selected_anomaly):
     client = get_groq_client()
+
     if client is None:
         raise RuntimeError(
-            "GROQ_API_KEY is not configured. Add [groq] api_key to Streamlit Cloud Secrets."
+            "GROQ_API_KEY is not configured. "
+            "Add [groq] api_key to Streamlit Cloud Secrets."
         )
+
     timestamp = clean_value(selected_anomaly.get("timestamp"))
     inverter_id = (
         clean_value(selected_anomaly.get("inverter_id"))
         if "inverter_id" in selected_anomaly.index
         else None
     )
+
     evidence = {}
-    system_prompt = """You are an assistant that explains inverter anomalies to a normal \
-dashboard user (not a technical or ML user), using only evidence returned by tools.
 
-TOOL USE- Before writing your final answer, call the available tools -- get_anomaly_details,
-get_pre_anomaly_trend, get_feature_contributions, get_operating_context, and
-get_baseline_context -- for the given timestamp and inverter_id, to gather the
-anomaly's operating status, daylight/time-of-day context, power and current values,
-inverter and ambient temperature, efficiency, power factor, frequency,
-communication/quality info, feature contributions, anomaly reason, the 24-hour
-pre-anomaly trend, and healthy reference values under similar operating
-conditions. Use the healthy baseline to compare the anomaly's actual readings
-with normal healthy values for those conditions. Do not rely only on the
-timestamp/inverter_id given to you -- use the tools to gather this evidence yourself.
-- Never invent, estimate, or assume a value that was not returned by a tool. If a tool \
-returns an error or is missing data, work only with what is available.
-- If the remaining evidence is not enough to explain why the anomaly happened, say exactly: \
-"The available data is not sufficient to determine the exact reason." Do not guess.
+    system_prompt = """You are an assistant that explains inverter anomalies
+to a normal dashboard user using only evidence returned by the available tools.
 
-CAUSALITY RULES (critical)
-- A feature's contribution means it was one of the readings that stood out as unusual in \
-the anomaly evidence. It does NOT mean that feature caused the anomaly, and it does NOT mean \
-a component failed. Never state or imply a root cause (e.g. never say "high temperature \
-caused the anomaly" or "the cooling system failed").
-- Instead, describe a contributing parameter as something that stood out, and offer a \
-practical check rather than a diagnosis, e.g. "Temperature was one of the parameters that \
-contributed strongly to the unusual pattern" and "Cooling performance should be checked if \
-this pattern persists."
-- Keep observed fact, possible explanation, and recommended check clearly separate -- do not \
-blur them into a single causal claim.
-- The healthy baseline is a comparison reference only. It shows whether a
-reading is unusual compared with healthy operation under similar conditions.
-It does not prove why the anomaly occurred, identify a failed component, or
-establish a root cause.
+Before writing the final answer, gather the available evidence for the selected
+timestamp and inverter, including anomaly details, operating context, healthy
+baseline, feature contributions, and the pre-anomaly trend.
 
-NORMAL-OPERATING-CONDITIONS RULE
-- Before calling anything unusual, consider is_daylight, hour, month,
-inverter_status, power level, ambient temperature, the healthy baseline under
-similar conditions, and the normal pre-anomaly trend from the tools.
-- A value should be described as unusual when it differs materially from the
-healthy reference for comparable operating conditions. Do not call a change
-abnormal merely because it is higher than at an earlier time.
-- The healthy baseline is evidence of what healthy operation normally looked
-like under similar conditions; it is not evidence of the cause of the anomaly.
+Never invent or estimate values.
 
-LANGUAGE RULES
-- Use simple, plain, professional language.
-- Never mention: autoencoder, reconstruction error, EVT, POT, anomaly_score_ratio, threshold, \
-feature contribution percentage, model score, confidence score, probability, or any other ML \
-model internals.
-- Never say things like "the model predicts with X% confidence", "the probability of failure \
-is...", "the root cause is...", "the ML model determined that...", or "the autoencoder \
-detected...".
-- Prefer phrasing like: "The inverter showed unusual behavior...", "The main parameter \
-contributing to the unusual pattern was...", "Before the anomaly, AC power decreased \
-while...", "This should be checked...", "The available data does not confirm the exact \
-cause."
+A feature contribution means that the parameter contributed to the unusual
+pattern. It does NOT prove that the parameter caused the anomaly and it does
+NOT prove component failure.
 
-OUTPUT FORMAT
-Return ONE single paragraph only.
+The healthy baseline is only a comparison reference for similar operating
+conditions. It does not establish a root cause.
 
-The paragraph must naturally include:
+Consider daylight, hour, month, inverter status, power level, temperature,
+communication status, and the pre-anomaly trend before describing something
+as unusual.
+
+Use simple, professional language.
+
+Do not mention autoencoder, reconstruction error, threshold, anomaly score,
+feature contribution percentage, probability, confidence, or other ML
+internals.
+
+Do not claim a root cause.
+
+Return ONE paragraph only.
+
+The paragraph must naturally explain:
 - what happened
 - when it happened
-- why it was flagged
+- why it was unusual
 - what should be checked
 
-Do NOT use headings.
-Do NOT use bullet points.
-Do NOT use numbered lists.
-Do NOT use Markdown or bold markers.
-Do NOT use labels such as "What happened:", "When:", "Why it was flagged:", or "What to check:".
+Use 4-6 concise sentences and keep it under about 110 words.
 
-Write 4-6 concise sentences in plain, professional language. Keep the entire response under about 110 words. Do not add any other sections or ML terminology.
+Do not use headings, bullets, numbered lists, Markdown, or labels.
 """
+
     messages = [
-        {"role": "system", "content": system_prompt},
+        {
+            "role": "system",
+            "content": system_prompt,
+        },
         {
             "role": "user",
             "content": json.dumps(
                 {
                     "instruction": (
-                        "Explain this anomaly for a dashboard user. Call the tools to "
-                        "gather the evidence you need -- do not rely on this message alone."
+                        "Explain the selected inverter anomaly using the "
+                        "available evidence tools."
                     ),
                     "selected_timestamp": timestamp,
                     "inverter_id": inverter_id,
@@ -865,7 +840,10 @@ Write 4-6 concise sentences in plain, professional language. Keep the entire res
         },
     ]
 
-    for _ in range(6):
+    # Give the model enough turns to gather evidence, but guarantee that
+    # the function eventually produces a final answer.
+    for _ in range(8):
+
         response = client.chat.completions.create(
             model="openai/gpt-oss-20b",
             messages=messages,
@@ -873,11 +851,52 @@ Write 4-6 concise sentences in plain, professional language. Keep the entire res
             tool_choice="auto",
             temperature=0.2,
         )
+
         msg = response.choices[0].message
 
+        # ----------------------------------------------------
+        # FINAL ANSWER FROM GROQ
+        # ----------------------------------------------------
         if not msg.tool_calls:
-            return msg.content, evidence
 
+            explanation = (msg.content or "").strip()
+
+            if explanation:
+                return explanation, evidence
+
+            # Groq returned no tool calls and no text.
+            # Make one final request without tools so that the
+            # model must produce the dashboard explanation.
+            final_messages = messages + [
+                {
+                    "role": "user",
+                    "content": (
+                        "Now provide the final dashboard explanation as "
+                        "one paragraph. Do not call any more tools."
+                    ),
+                }
+            ]
+
+            final_response = client.chat.completions.create(
+                model="openai/gpt-oss-20b",
+                messages=final_messages,
+                temperature=0.2,
+            )
+
+            final_text = (
+                final_response.choices[0].message.content or ""
+            ).strip()
+
+            if final_text:
+                return final_text, evidence
+
+            raise RuntimeError(
+                "Groq returned an empty explanation."
+            )
+
+        # ----------------------------------------------------
+        # ADD GROQ TOOL CALLS TO CONVERSATION
+        # ----------------------------------------------------
         messages.append(
             {
                 "role": "assistant",
@@ -896,129 +915,69 @@ Write 4-6 concise sentences in plain, professional language. Keep the entire res
             }
         )
 
+        # ----------------------------------------------------
+        # EXECUTE EACH TOOL
+        # ----------------------------------------------------
         for tc in msg.tool_calls:
+
             try:
                 args = json.loads(tc.function.arguments)
             except Exception:
                 args = {}
-            result = execute_ai_tool(tc.function.name, args)
+
+            try:
+                result = execute_ai_tool(
+                    tc.function.name,
+                    args,
+                )
+            except Exception as tool_error:
+                result = {
+                    "error": str(tool_error)
+                }
+
             evidence[tc.function.name] = result
+
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": json.dumps(result, default=str),
+                    "content": json.dumps(
+                        result,
+                        default=str,
+                    ),
                 }
             )
 
-    raise RuntimeError(
-        "AI investigation reached the maximum tool-call steps without producing an explanation."
+    # --------------------------------------------------------
+    # SAFETY FALLBACK
+    # --------------------------------------------------------
+    fallback_messages = messages + [
+        {
+            "role": "user",
+            "content": (
+                "Stop gathering evidence now. Based only on the evidence "
+                "already collected above, write the final explanation as "
+                "one concise paragraph. Do not call tools."
+            ),
+        }
+    ]
+
+    fallback_response = client.chat.completions.create(
+        model="openai/gpt-oss-20b",
+        messages=fallback_messages,
+        temperature=0.2,
     )
 
+    fallback_text = (
+        fallback_response.choices[0].message.content or ""
+    ).strip()
 
-def build_llm_evidence(anomaly_row, trend_window, contribution_cols):
-    """
-    Package only the available, factual evidence for a selected anomaly into
-    a JSON-serializable structure suitable for passing to an LLM later.
+    if fallback_text:
+        return fallback_text, evidence
 
-    Evidence is descriptive only. No causal claims, fault labels, or
-    probability language are added here -- that judgment is left entirely
-    to whatever consumes this evidence, and even then should be bounded by
-    the same rule: describe what the data shows, state what it does not
-    establish.
-    """
-
-    def clean(v):
-        if v is None or (isinstance(v, float) and pd.isna(v)):
-            return None
-        if isinstance(v, (pd.Timestamp, datetime)):
-            return str(v)
-        if hasattr(v, "item"):  # numpy scalar
-            return v.item()
-        return v
-
-    top_contributions = {}
-    for col in contribution_cols:
-        feature_name = col.replace("_contribution_pct", "")
-        top_contributions[feature_name] = clean(anomaly_row.get(col))
-
-    evidence = {
-        "anomaly_observation": {
-            "timestamp": clean(anomaly_row.get("timestamp")),
-            "reconstruction_error": clean(anomaly_row.get("reconstruction_error")),
-            "anomaly_score_ratio": clean(anomaly_row.get("anomaly_score_ratio")),
-            "note_on_score": (
-                "anomaly_score_ratio is reconstruction_error divided by the "
-                "detection threshold. It is a ratio, not a probability or "
-                "confidence level."
-            ),
-            "top_contributing_feature": clean(anomaly_row.get("top_contributing_feature")),
-            "feature_contribution_pct": top_contributions,
-            "anomaly_reason": clean(anomaly_row.get("anomaly_reason")),
-        },
-        "values_during_anomaly": {
-            k: clean(anomaly_row.get(k))
-            for k in [
-                "inverter_temperature_c",
-                "ambient_temperature_c",
-                "inverter_ambient_temp_delta",
-                "temp_delta_zscore",
-                "dc_power_kw",
-                "ac_power_kw",
-                "quality_code_inv",
-                "communication_status_inv",
-            ]
-            if k in anomaly_row.index
-        },
-        "trend_window_before_anomaly": None,
-        "guidance_for_explanation": [
-            "Explain what was detected (which observation(s) exceeded the "
-            "reconstruction-error threshold).",
-            "Explain which feature(s) contributed most to reconstruction "
-            "error, described as a contribution -- never as a 'cause' or "
-            "'root cause' unless the evidence itself establishes that.",
-            "Describe what changed before vs. during the anomaly, using "
-            "only the trend statistics provided.",
-            "State what the data supports.",
-            "State plainly what cannot be concluded from this evidence "
-            "alone (e.g. do not assert a temperature rise caused the "
-            "anomaly merely because temperature was elevated; do not call "
-            "an anomaly a fault automatically).",
-        ],
-    }
-
-    if trend_window is not None and len(trend_window) > 0:
-        numeric_cols = [
-            c
-            for c in [
-                "ac_power_kw",
-                "dc_current_a",
-                "dc_power_kw",
-                "inverter_temperature_c",
-                "inverter_ambient_temp_delta",
-                "ambient_temperature_c",
-            ]
-            if c in trend_window.columns
-        ]
-        stats = {}
-        for col in numeric_cols:
-            series = pd.to_numeric(trend_window[col], errors="coerce").dropna()
-            if len(series) >= 2:
-                stats[col] = {
-                    "start": clean(series.iloc[0]),
-                    "end": clean(series.iloc[-1]),
-                    "net_change": clean(series.iloc[-1] - series.iloc[0]),
-                    "min": clean(series.min()),
-                    "max": clean(series.max()),
-                }
-        evidence["trend_window_before_anomaly"] = {
-            "window_start": clean(trend_window["timestamp"].min()),
-            "window_end": clean(trend_window["timestamp"].max()),
-            "number_of_observations": int(len(trend_window)),
-            "net_changes": stats,
-        }
-
-    return evidence
+    raise RuntimeError(
+        "Groq did not return a usable explanation."
+    )
 
 
 
@@ -1572,26 +1531,55 @@ if len(anomaly_df) > 0:
     cached = st.session_state["ai_explanations"].get(anomaly_key)
 
     if regenerate or cached is None:
+
         with st.spinner("Generating explanation from the anomaly evidence..."):
+
             try:
-                ai_explanation, ai_evidence = generate_ai_explanation(selected_anomaly)
+                ai_explanation, ai_evidence = generate_ai_explanation(
+                    selected_anomaly
+                )
+
                 cached = {
                     "explanation": ai_explanation,
                     "evidence": ai_evidence,
                     "error": None,
                 }
+
             except Exception as e:
+
                 cached = {
                     "explanation": None,
                     "evidence": None,
                     "error": str(e),
                 }
+
             st.session_state["ai_explanations"][anomaly_key] = cached
 
-    if cached.get("error"):
-        st.error(f"AI explanation failed: {cached['error']}")
+
+    # ------------------------------------------------------------
+    # ALWAYS RENDER AN AI RESULT AREA
+    # ------------------------------------------------------------
+
+    if cached is None:
+        st.info("Select an anomaly to generate an AI explanation.")
+
+    elif cached.get("error"):
+
+        st.error(
+            f"AI explanation failed: {cached['error']}"
+        )
+
     elif cached.get("explanation"):
-        render_ai_explanation(cached["explanation"])
+
+        render_ai_explanation(
+            cached["explanation"]
+        )
+
+    else:
+
+        st.warning(
+            "Groq did not return an explanation for this anomaly."
+        )
 
 else:
     st.info(
