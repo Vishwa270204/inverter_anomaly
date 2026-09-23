@@ -334,20 +334,114 @@ def rule_structure(text, results):
         })
 
 
+def rule_direction_of_change(text, evidence, results):
+    """If the text claims a value 'rose', 'increased', 'dropped', 'fell',
+    etc., check that against the actual start->end (or pre-event trend)
+    change for that feature, not just whether the number itself is in range."""
+    direction_words = {
+        "rose": "up", "rising": "up", "increased": "up", "increasing": "up",
+        "went up": "up", "climbed": "up", "spiked": "up", "high": "up",
+        "dropped": "down", "fell": "down", "decreased": "down",
+        "declining": "down", "went down": "down", "low": "down",
+    }
+    lowered = text.lower()
+    for phrase, field, unit, unit_pattern in FEATURE_KEYWORDS:
+        for m in re.finditer(re.escape(phrase), lowered):
+            window = lowered[m.end(): m.end() + 60]
+            found_word = next((w for w in direction_words if w in window), None)
+            if not found_word:
+                continue
+            claimed_dir = direction_words[found_word]
+
+            # Prefer the pre-event trend's net_change (start->end over the
+            # preceding window) since that's what "rise"/"drop" usually means;
+            # fall back to the event's own start->end if trend data is absent.
+            net_change = None
+            trend_stats = evidence.get("pre_event_trend", {}).get("statistics", {})
+            if field in trend_stats and trend_stats[field].get("net_change") is not None:
+                net_change = trend_stats[field]["net_change"]
+            else:
+                ev_stats = evidence.get("event_observations", {}).get("statistics", {})
+                if field in ev_stats and ev_stats[field].get("start") is not None:
+                    net_change = ev_stats[field]["end"] - ev_stats[field]["start"]
+
+            if net_change is None:
+                results.append({
+                    "rule": f"direction_of_change[{field}]",
+                    "status": "WARN",
+                    "detail": f"Claimed '{found_word}' for {field}, but no start/end "
+                              f"or trend data available to confirm direction.",
+                })
+                continue
+
+            actual_dir = "up" if net_change > 0 else ("down" if net_change < 0 else "flat")
+            if actual_dir == claimed_dir:
+                results.append({
+                    "rule": f"direction_of_change[{field}]",
+                    "status": "PASS",
+                    "detail": f"Claimed '{found_word}' matches actual net change "
+                              f"({net_change:+.2f}) for {field}.",
+                })
+            else:
+                results.append({
+                    "rule": f"direction_of_change[{field}]",
+                    "status": "FAIL",
+                    "detail": f"Claimed '{found_word}' but actual net change for "
+                              f"{field} was {net_change:+.2f} ({actual_dir}).",
+                })
+
+
+# ------------------------------------------------------------
+# RULE GROUPS
+# ------------------------------------------------------------
+
+# "content" rules check whether the generated CLAIMS are factually true
+# against the evidence (numbers, direction of change, timing, range labels).
+# "structure" rules check formatting/style constraints from the prompt
+# (word count, single paragraph, banned ML terms, causal-language hedging).
+CONTENT_RULES = [
+    rule_numeric_claims,
+    rule_duration,
+    rule_time_window,
+    rule_range_label,
+    rule_direction_of_change,
+]
+
+STRUCTURE_RULES = [
+    rule_banned_terms,
+    rule_unsupported_causality,
+    rule_structure,
+]
+
+
 # ------------------------------------------------------------
 # MAIN ENTRY POINT
 # ------------------------------------------------------------
 
-def validate_explanation(explanation_text, evidence):
-    """Run every rule and return a flat list of {rule, status, detail} dicts."""
+def validate_explanation(explanation_text, evidence, checks="content"):
+    """Run the requested rule group(s) and return a flat list of
+    {rule, status, detail} dicts.
+
+    checks: "content" (default) -- only checks whether the generated claims
+            (numbers, direction, timing, range labels) are factually
+            supported by the evidence. This is what you want to answer
+            "is the DC-power-rose claim actually correct?"
+            "structure" -- only formatting/style rules (word count,
+            single paragraph, banned terms, causal-language hedging).
+            "all" -- both groups.
+    """
     results = []
-    rule_numeric_claims(explanation_text, evidence, results)
-    rule_duration(explanation_text, evidence, results)
-    rule_time_window(explanation_text, evidence, results)
-    rule_range_label(explanation_text, evidence, results)
-    rule_banned_terms(explanation_text, results)
-    rule_unsupported_causality(explanation_text, evidence, results)
-    rule_structure(explanation_text, results)
+    rules_to_run = []
+    if checks in ("content", "all"):
+        rules_to_run += CONTENT_RULES
+    if checks in ("structure", "all"):
+        rules_to_run += STRUCTURE_RULES
+
+    for rule_fn in rules_to_run:
+        if rule_fn in (rule_banned_terms, rule_structure):
+            rule_fn(explanation_text, results)
+        else:
+            rule_fn(explanation_text, evidence, results)
     return results
 
 
