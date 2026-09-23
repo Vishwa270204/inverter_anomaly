@@ -1344,7 +1344,7 @@ if not baseline_df.empty:
 
     baseline_features = {
         "dc_power_kw": "DC Power",
-        "inverter_temperature_c": "Temperature",
+        "inverter_temperature_delta": "Temperature",
     }
 
     baseline_text = []
