@@ -343,15 +343,27 @@ def check_healthy_baseline(selected_event, evidence, df, baseline_df, results):
 # MAIN ENTRY POINT
 # ------------------------------------------------------------
 
-def validate_event_data(selected_event, evidence, df, trend_df=None, baseline_df=None):
+def validate_event_data(evidence, df, trend_df=None, baseline_df=None):
     """Run all data-fetch checks for ONE specific anomaly event.
 
-    selected_event: the row from events_df the user picked in the dropdown.
-    evidence:        cached["evidence"] -- what was actually sent to the LLM.
-    df:              full scored dashboard_data.parquet (with anomaly_flag).
-    trend_df:        full trend_data.parquet (optional; skips trend checks if None).
-    baseline_df:      dashboard_baseline.parquet (optional; skips baseline checks if None).
+    evidence:  cached["evidence"] -- what was actually sent to the LLM for
+               this event. The event's time window and anomaly_count are
+               read directly from evidence["event"], NOT from any separate
+               `selected_event` variable in the caller -- this guarantees
+               the check always validates the exact event that generated
+               this evidence, even if the caller's own selection state has
+               since moved on to a different event.
+    df:        full scored dashboard_data.parquet (with anomaly_flag).
+    trend_df:  full trend_data.parquet (optional; skips trend checks if None).
+    baseline_df: dashboard_baseline.parquet (optional; skips baseline checks if None).
     """
+    ev = evidence.get("event", {})
+    selected_event = pd.Series({
+        "start_time": ev.get("start_time"),
+        "end_time": ev.get("end_time"),
+        "anomaly_count": ev.get("anomaly_count"),
+    })
+
     results = []
     check_event_window(selected_event, evidence, df, results)
     check_event_statistics(selected_event, evidence, df, results)
