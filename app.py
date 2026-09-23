@@ -1512,20 +1512,21 @@ elif cached.get("error"):
 
 elif cached.get("explanation"):
     render_ai_explanation(cached["explanation"])
- 
+
     ev_meta = cached["evidence"].get("event", {})
     event_label = (
         f"{ev_meta.get('event_id', event_key)} "
         f"({ev_meta.get('start_time', '?')} → {ev_meta.get('end_time', '?')})"
     )
-  
+    st.caption(f"Validating data for **{event_label}**")
+
     # --------------------------------------------------------
     # DATA-FETCH VALIDATION -- is the evidence itself correct?
-    # Independently recomputes stats from df / trend_df / baseline_df
-    # for THIS event and diffs against what was actually sent to the LLM.
+    # Reads the event window straight out of evidence["event"] (not a
+    # separately-passed selected_event), so this always matches whatever
+    # event actually produced this cached evidence.
     # --------------------------------------------------------
     data_results = validate_event_data(
-        selected_event=selected_event,
         evidence=cached["evidence"],
         df=df,
         trend_df=trend_df if has_trend_data else None,
@@ -1533,16 +1534,36 @@ elif cached.get("explanation"):
     )
     data_verdict = summarize_data(data_results)
     badge = {"PASS": "✅", "NEEDS_REVIEW": "⚠️", "FAIL": "❌"}[data_verdict["verdict"]]
- 
-    with st.expander(
-        f"{badge} Data validation: {data_verdict['verdict']} "
-        f"({data_verdict['pass_count']} passed, {data_verdict['fail_count']} failed, "
-        f"{data_verdict['warn_count']} needs review)"
-    ):
-        for r in data_results:
-            icon = {"PASS": "✅", "FAIL": "❌", "WARN": "⚠️"}[r["status"]]
-            st.markdown(f"{icon} **{r['rule']}** — {r['detail']}")
- 
+
+    # Always-visible summary row (no click needed to see the verdict).
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Verdict", f"{badge} {data_verdict['verdict']}")
+    m2.metric("Passed", data_verdict["pass_count"])
+    m3.metric("Failed", data_verdict["fail_count"])
+    m4.metric("Needs review", data_verdict["warn_count"])
+
+    # Always-visible table (no expander) -- only shows FAIL/WARN rows by
+    # default so it stays short; flip show_all to see every check.
+    show_all = st.checkbox("Show all checks (including passed)", value=False)
+    rows_to_show = data_results if show_all else [
+        r for r in data_results if r["status"] != "PASS"
+    ]
+
+    if rows_to_show:
+        table = pd.DataFrame(rows_to_show)[["status", "rule", "detail"]]
+        table.columns = ["Status", "Check", "Detail"]
+
+        def _highlight(row):
+            color = {"FAIL": "#FDECEA", "WARN": "#FFF7E0", "PASS": "#EAF7EE"}[row["Status"]]
+            return [f"background-color: {color}"] * len(row)
+
+        st.dataframe(
+            table.style.apply(_highlight, axis=1),
+            width="stretch",
+            hide_index=True,
+        )
+    else:
+        st.success("All data checks passed for this event.") 
 else:
 
     st.warning(
