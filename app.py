@@ -16,7 +16,8 @@ import json
 import os
 import re
 from datetime import datetime, timedelta
-from validation import validate_explanation, summarize
+from validation import validate_explanation, summarize as summarize_wording
+from data_validation import validate_event_data, summarize as summarize_data
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -1512,34 +1513,38 @@ elif cached.get("error"):
 
 elif cached.get("explanation"):
     render_ai_explanation(cached["explanation"])
-    validation_results = validate_explanation(
-        cached["explanation"], cached["evidence"], checks="content"
-    )
-    verdict = summarize(validation_results)
-
-    badge = {"PASS": "✅", "NEEDS_REVIEW": "⚠️", "FAIL": "❌"}[verdict["verdict"]]
-
-    # Pull the selected event's own identifiers straight from the evidence
-    # that was actually used to generate this explanation -- this guarantees
-    # the validation panel always matches whatever event is picked in the
-    # "Select an anomaly event" dropdown above, even after Regenerate.
+ 
     ev_meta = cached["evidence"].get("event", {})
     event_label = (
         f"{ev_meta.get('event_id', event_key)} "
         f"({ev_meta.get('start_time', '?')} → {ev_meta.get('end_time', '?')})"
     )
-
-    st.caption(f"Validating explanation for **{event_label}**")
-
+    st.caption(f"Validating data for **{event_label}**")
+ 
+    # --------------------------------------------------------
+    # DATA-FETCH VALIDATION -- is the evidence itself correct?
+    # Independently recomputes stats from df / trend_df / baseline_df
+    # for THIS event and diffs against what was actually sent to the LLM.
+    # --------------------------------------------------------
+    data_results = validate_event_data(
+        selected_event=selected_event,
+        evidence=cached["evidence"],
+        df=df,
+        trend_df=trend_df if has_trend_data else None,
+        baseline_df=baseline_df,
+    )
+    data_verdict = summarize_data(data_results)
+    badge = {"PASS": "✅", "NEEDS_REVIEW": "⚠️", "FAIL": "❌"}[data_verdict["verdict"]]
+ 
     with st.expander(
-        f"{badge} Validation: {verdict['verdict']} "
-        f"({verdict['pass_count']} passed, {verdict['fail_count']} failed, "
-        f"{verdict['warn_count']} needs review)"
+        f"{badge} Data validation: {data_verdict['verdict']} "
+        f"({data_verdict['pass_count']} passed, {data_verdict['fail_count']} failed, "
+        f"{data_verdict['warn_count']} needs review)"
     ):
-        for r in validation_results:
+        for r in data_results:
             icon = {"PASS": "✅", "FAIL": "❌", "WARN": "⚠️"}[r["status"]]
             st.markdown(f"{icon} **{r['rule']}** — {r['detail']}")
-
+ 
 else:
 
     st.warning(
