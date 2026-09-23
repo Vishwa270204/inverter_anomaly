@@ -1508,12 +1508,24 @@ elif cached.get("error"):
     st.error(
         f"AI explanation failed: {cached['error']}"
     )
-
 elif cached.get("explanation"):
-
-    render_ai_explanation(
-        cached["explanation"]
+    render_ai_explanation(cached["explanation"])
+ 
+    validation_results = validate_explanation(
+        cached["explanation"], cached["evidence"]
     )
+    verdict = summarize(validation_results)
+ 
+    badge = {"PASS": "✅", "NEEDS_REVIEW": "⚠️", "FAIL": "❌"}[verdict["verdict"]]
+ 
+    with st.expander(
+        f"{badge} Validation: {verdict['verdict']} "
+        f"({verdict['pass_count']} passed, {verdict['fail_count']} failed, "
+        f"{verdict['warn_count']} needs review)"
+    ):
+        for r in validation_results:
+            icon = {"PASS": "✅", "FAIL": "❌", "WARN": "⚠️"}[r["status"]]
+            st.markdown(f"{icon} **{r['rule']}** — {r['detail']}")
 
 else:
 
