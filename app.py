@@ -1509,16 +1509,28 @@ elif cached.get("error"):
     st.error(
         f"AI explanation failed: {cached['error']}"
     )
+
 elif cached.get("explanation"):
     render_ai_explanation(cached["explanation"])
- 
     validation_results = validate_explanation(
-        cached["explanation"], cached["evidence"]
+        cached["explanation"], cached["evidence"], checks="content"
     )
     verdict = summarize(validation_results)
- 
+
     badge = {"PASS": "✅", "NEEDS_REVIEW": "⚠️", "FAIL": "❌"}[verdict["verdict"]]
- 
+
+    # Pull the selected event's own identifiers straight from the evidence
+    # that was actually used to generate this explanation -- this guarantees
+    # the validation panel always matches whatever event is picked in the
+    # "Select an anomaly event" dropdown above, even after Regenerate.
+    ev_meta = cached["evidence"].get("event", {})
+    event_label = (
+        f"{ev_meta.get('event_id', event_key)} "
+        f"({ev_meta.get('start_time', '?')} → {ev_meta.get('end_time', '?')})"
+    )
+
+    st.caption(f"Validating explanation for **{event_label}**")
+
     with st.expander(
         f"{badge} Validation: {verdict['verdict']} "
         f"({verdict['pass_count']} passed, {verdict['fail_count']} failed, "
