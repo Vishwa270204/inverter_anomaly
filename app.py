@@ -16,7 +16,6 @@ import json
 import os
 import re
 from datetime import datetime, timedelta
-from validation import validate_explanation, summarize as summarize_wording
 from data_validation import validate_event_data, summarize as summarize_data
 import pandas as pd
 import plotly.graph_objects as go
