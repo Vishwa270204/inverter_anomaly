@@ -1004,7 +1004,7 @@ def generate_ai_explanation(selected_event, event_rows):
     # 8. AI PROMPT
     # ------------------------------------------------------------
 
-        prompt = """
+    prompt = """
         You are an explanation assistant inside a solar inverter anomaly detection dashboard.
         Respond with ONLY a single JSON object — no markdown fences, no extra text.
 
