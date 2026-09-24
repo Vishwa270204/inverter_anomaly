@@ -1059,53 +1059,69 @@ def generate_ai_explanation(selected_event, event_rows):
     # ------------------------------------------------------------
     # 9. GROQ REQUEST
     # ------------------------------------------------------------
+    # Two layers of defense against malformed JSON from the model:
+    #   1. response_format={"type": "json_object"} asks Groq to constrain
+    #      generation to valid JSON in the first place.
+    #   2. If parsing still fails (rare -- e.g. a stray unescaped quote
+    #      inside a bullet string), send the broken output back once with
+    #      the exact parser error and ask the model to fix it, instead of
+    #      failing the whole explanation.
 
-    try:
+    def _call_groq(messages):
+        try:
+            response = client.chat.completions.create(
+                model="openai/gpt-oss-20b",
+                messages=messages,
+                reasoning_effort="low",
+                include_reasoning=False,
+                temperature=0.2,
+                max_completion_tokens=768,
+                response_format={"type": "json_object"},
+            )
+        except Exception as e:
+            raise RuntimeError(f"Groq request failed: {e}") from e
 
-        response = client.chat.completions.create(
-            model="openai/gpt-oss-20b",
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            reasoning_effort="low",
-            include_reasoning=False,
-            temperature=0.2,
-            max_completion_tokens=768,
-        )
+        content = getattr(response.choices[0].message, "content", None)
+        if content is None:
+            raise RuntimeError("Groq returned no text content.")
 
-    except Exception as e:
+        content = str(content).strip()
+        # Strip accidental ```json fences some models add despite instructions.
+        content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content).strip()
 
-        raise RuntimeError(
-            f"Groq request failed: {e}"
-        ) from e
+        if not content:
+            raise RuntimeError("Groq returned an empty explanation.")
 
-    raw_content = getattr(
-        response.choices[0].message,
-        "content",
-        None,
-    )
+        return content
 
-    if raw_content is None:
-        raise RuntimeError(
-            "Groq returned no text content."
-        )
-
-    raw_content = str(raw_content).strip()
-    # Strip accidental ```json fences some models add despite instructions.
-    raw_content = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_content).strip()
-
-    if not raw_content:
-        raise RuntimeError(
-            "Groq returned an empty explanation."
-        )
+    base_messages = [{"role": "user", "content": prompt}]
+    raw_content = _call_groq(base_messages)
 
     try:
         parsed = json.loads(raw_content)
-    except Exception as e:
-        raise RuntimeError(f"Groq did not return valid JSON: {e}") from e
+    except Exception as first_error:
+        # Repair attempt: show the model its own broken output and the
+        # exact parser error, and ask for a corrected JSON object only.
+        repair_messages = base_messages + [
+            {"role": "assistant", "content": raw_content},
+            {
+                "role": "user",
+                "content": (
+                    "That was not valid JSON. The parser error was: "
+                    f"{first_error}. Return ONLY a corrected, valid JSON "
+                    "object with the same fields (headline, summary, "
+                    "why_it_happened, recommended_actions). No markdown "
+                    "fences, no explanation, just the JSON object."
+                ),
+            },
+        ]
+        try:
+            raw_content = _call_groq(repair_messages)
+            parsed = json.loads(raw_content)
+        except Exception as second_error:
+            raise RuntimeError(
+                f"Groq did not return valid JSON after a retry: {second_error}"
+            ) from second_error
 
     if not isinstance(parsed, dict):
         raise RuntimeError("Groq JSON response was not an object.")
@@ -1207,6 +1223,7 @@ def render_ai_explanation(data):
         '''),
         unsafe_allow_html=True,
     )
+
 # ============================================================
 # HEADER
 # ============================================================
