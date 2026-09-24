@@ -1793,40 +1793,7 @@ if len(events_df) > 0:
         else:
             st.info("Not enough history is available to draw the event trend.")
 
-        comparison_cols = st.columns(2)
-        with comparison_cols[0]:
-            st.markdown("### Power Comparison")
-            comparison = []
-            for col, label in [("dc_power_kw", "DC Power"), ("ac_power_kw", "AC Power")]:
-                if col in event_rows.columns:
-                    series = pd.to_numeric(event_rows[col], errors="coerce").dropna()
-                    if len(series) >= 2:
-                        comparison.extend([
-                            {"Metric": label, "Period": "Start", "Value": series.iloc[0]},
-                            {"Metric": label, "Period": "End", "Value": series.iloc[-1]},
-                        ])
-            if comparison:
-                comp_df = pd.DataFrame(comparison)
-                fig_comp = go.Figure()
-                for period in ["Start", "End"]:
-                    part = comp_df[comp_df["Period"] == period]
-                    fig_comp.add_trace(go.Bar(x=part["Metric"], y=part["Value"], name=period))
-                fig_comp.update_layout(height=290, template="plotly_white", yaxis_title="kW", margin=dict(t=15, l=45, r=15, b=40))
-                st.plotly_chart(fig_comp, width="stretch")
-            else:
-                st.info("Power comparison is not available.")
-
-        with comparison_cols[1]:
-            st.markdown("### Temperature Trend")
-            if "inverter_temperature_c" in trend_window.columns and len(trend_window) > 1:
-                fig_temp = go.Figure()
-                fig_temp.add_trace(go.Scatter(x=trend_window["timestamp"], y=trend_window["inverter_temperature_c"], mode="lines", name="Temperature (°C)", line=dict(color="#59A14F", width=2)))
-                fig_temp.add_vrect(x0=event_start, x1=event_end, fillcolor="#E45756", opacity=0.10, line_color="#E45756", line_width=1)
-                fig_temp.update_layout(height=290, template="plotly_white", yaxis_title="°C", margin=dict(t=15, l=45, r=15, b=40))
-                st.plotly_chart(fig_temp, width="stretch")
-            else:
-                st.info("Temperature trend is not available.")
-
+       
         with st.expander("Raw event data (for reference)"):
             st.dataframe(event_rows, width="stretch", hide_index=True)
 
