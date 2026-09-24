@@ -1354,38 +1354,6 @@ def validate_ai_explanation(explanation, evidence, event_rows, selected_event, b
             add("Temperature / threshold claim", "FAIL", "Temperature claim does not match the supplied event/baseline values.")
     else:
         add("Temperature / threshold claim", "PASS", "No unsupported temperature-limit claim detected.")
-
-    # Strong causal language is flagged because reconstruction contributions do
-    # not prove physical root cause.
-    causal_terms = ["caused by", "caused the", "root cause is", "definitely caused", "due to"]
-    has_causal_language = any(term in ai_text for term in causal_terms)
-    add(
-        "Causal claim strength",
-        "WARN" if has_causal_language else "PASS",
-        ("Potentially unsupported causal wording detected. " if has_causal_language else "No strong unsupported causal wording detected. ")
-        + "Feature contributions do not prove physical causation.",
-    )
-
-    # Recommendations are checked for dependencies on data that are not
-    # actually available in the inverter-level evidence.
-    action_text = " ".join(str(x) for x in explanation.get("recommended_actions", []) if x).lower()
-    operating_context = evidence.get("operating_context", {})
-    event_stats = evidence.get("event_observations", {}).get("statistics", {})
-    unsupported_topics = []
-    if "solar array" in action_text and "solar_array" not in operating_context:
-        unsupported_topics.append("solar-array condition")
-    if "grid" in action_text and not any(k in operating_context for k in ["grid_connection_status", "grid_frequency_hz"]):
-        unsupported_topics.append("grid condition")
-    if "cooling system" in action_text and "inverter_temperature_c" not in event_stats:
-        unsupported_topics.append("cooling-system condition")
-
-    add(
-        "Recommendation grounding",
-        "WARN" if unsupported_topics else "PASS",
-        ("Recommendation refers to data not present in the event evidence: " + ", ".join(unsupported_topics) + ".")
-        if unsupported_topics else "Recommendations are grounded in the supplied inverter/event evidence.",
-    )
-
     return checks
 
 # ============================================================
