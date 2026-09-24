@@ -239,7 +239,50 @@ st.markdown(
         padding: 1.35rem 1.5rem;
         box-shadow: 0 2px 7px rgba(15, 23, 42, 0.05);
     }
+    .ai-alert-box {
+    display: flex;
+    gap: 0.65rem;
+    background: #FEF3F2;
+    border: 1px solid #FECDCA;
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+}
+.ai-alert-icon { font-size: 1.3rem; line-height: 1.4; flex-shrink: 0; }
+.ai-alert-title { font-weight: 700; color: #B42318; font-size: 1.02rem; margin-bottom: 0.15rem; }
+.ai-alert-desc { color: #7A271A; font-size: 0.95rem; line-height: 1.5; }
 
+.ai-section { margin-top: 1.1rem; }
+.ai-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 700;
+    color: #0F172A;
+    font-size: 1rem;
+    margin-bottom: 0.45rem;
+}
+.ai-section-icon { font-size: 1.05rem; }
+
+.ai-bullets { margin: 0; padding-left: 1.3rem; }
+.ai-bullets li { color: #1E293B; font-size: 0.96rem; line-height: 1.55; margin-bottom: 0.3rem; }
+
+.ai-meta-row { display: flex; gap: 2.5rem; flex-wrap: wrap; }
+.ai-meta-label { font-size: 0.82rem; color: #64748B; font-weight: 600; }
+.ai-meta-value { font-size: 0.98rem; color: #0F172A; font-weight: 600; }
+
+.ai-footer-note {
+    display: flex;
+    gap: 0.6rem;
+    background: #F0F6FF;
+    border: 1px solid #D6E4FA;
+    border-radius: 10px;
+    padding: 0.75rem 0.9rem;
+    margin-top: 1.1rem;
+    font-size: 0.85rem;
+    color: #375273;
+    line-height: 1.5;
+}
     .ai-row {
         padding: 0.15rem 0 0.9rem 0;
     }
@@ -961,48 +1004,37 @@ def generate_ai_explanation(selected_event, event_rows):
     # 8. AI PROMPT
     # ------------------------------------------------------------
 
-    prompt = """
+        prompt = """
         You are an explanation assistant inside a solar inverter anomaly detection dashboard.
-        
-        Write ONE short explanation in very simple and easy-to-understand language.
-        
+        Respond with ONLY a single JSON object — no markdown fences, no extra text.
+
+        JSON shape (all fields required, all values are plain strings unless noted):
+        {
+          "headline": "One short sentence naming what happened, simple language, no ML terms.",
+          "summary": "1-2 plain sentences expanding on the headline (what changed, roughly how much).",
+          "why_it_happened": ["bullet 1", "bullet 2", "bullet 3"],
+          "recommended_actions": ["bullet 1", "bullet 2", "bullet 3"]
+        }
+
         IMPORTANT RULES:
-        - Use simple words. Avoid technical/ML terms and complicated sentences.
-        - Explain the event as if you are explaining it to a plant operator.
-        - Use ONLY the supplied evidence.
-        - Never invent measurements, causes, events, or trends.
+        - Use simple words. Avoid technical/ML terms (no autoencoder, reconstruction error,
+          threshold, anomaly score, probability, confidence, etc).
+        - Explain as if talking to a plant operator, not a data scientist.
+        - Use ONLY the supplied evidence. Never invent measurements, causes, or events.
         - Do not automatically call the anomaly a fault.
-        - Feature contributions show which parameters were unusual; they do NOT prove the root cause.
-        - If the exact cause cannot be determined, clearly say that it cannot be determined from the available data.
-        - Do not mention Autoencoder, reconstruction error, threshold, anomaly score, probability, confidence, or other internal ML details.
-        - Do not use headings or bullet points.
-        - Return ONE paragraph only.
-        - Keep the answer brief: around 4-6 sentences and preferably under 100 words.
-        
-        The explanation should naturally cover:
-        1. WHAT happened
-        2. WHEN it happened
-        3. WHY it was unusual, using the actual evidence
-        4. WHAT should be checked next
-        
-        FORMATTING:
-        - Use Markdown **bold** very sparingly.
-        - Bold ONLY the most important 2-3 pieces of information in the entire paragraph.
-        - Prefer bolding the main anomaly finding and the recommended action.
-        - Do NOT bold every measurement, timestamp, parameter, status, or value.
-        - Keep most of the paragraph in normal text.
-        - The explanation should look natural and easy to read..
-        
-        Example style:
-        "The inverter showed an unusual condition from **11:30 to 11:50 on 8 June 2025**, lasting **20 minutes**. During this period, **AC power and efficiency were lower than the healthy operating range**, while the inverter was in **RUNNING** status. The main unusual parameters were **AC power and inverter temperature**. The available data does not confirm the exact cause, so **power conditions and inverter temperature should be checked for this period**."
-        
+        - Feature contributions show which parameters were unusual; they do NOT prove root cause.
+        - If the exact cause cannot be determined, say so plainly in "summary" or a bullet.
+        - "why_it_happened": 2-4 short bullets, each one plain-language fact from the evidence
+          (e.g. a parameter that moved outside its healthy range, or an unusual status/code).
+        - "recommended_actions": 2-4 short, concrete, checkable next steps for an operator.
+        - Keep every string free of markdown bold/asterisks — plain text only.
+
         EVENT EVIDENCE:
     """ + json.dumps(
             evidence,
             default=str,
             ensure_ascii=False
         )
-
     # ------------------------------------------------------------
     # 9. GROQ REQUEST
     # ------------------------------------------------------------
@@ -1029,63 +1061,108 @@ def generate_ai_explanation(selected_event, event_rows):
             f"Groq request failed: {e}"
         ) from e
 
-    explanation = getattr(
-        response.choices[0].message,
-        "content",
-        None,
-    )
-
-    if explanation is None:
-        raise RuntimeError(
-            "Groq returned no text content."
+        explanation = getattr(
+            response.choices[0].message,
+            "content",
+            None,
         )
+    
+        if explanation is None:
+            raise RuntimeError("Groq returned no text content.")
+    
+        explanation = str(explanation).strip()
+        # Strip accidental ```json fences
+        explanation = re.sub(r"^```(?:json)?\s*|\s*```$", "", explanation.strip())
+    
+        if not explanation:
+            raise RuntimeError("Groq returned an empty explanation.")
+    
+        try:
+            parsed = json.loads(explanation)
+        except Exception as e:
+            raise RuntimeError(f"Groq did not return valid JSON: {e}") from e
+    
+        required = ["headline", "summary", "why_it_happened", "recommended_actions"]
+        if not all(k in parsed for k in required):
+            raise RuntimeError("Groq JSON is missing required fields.")
+    
+        # "When it occurred" is computed from data Python already trusts —
+        # never taken from the LLM.
+        parsed["when_time"] = fmt_time(event_start)
+        parsed["when_duration"] = fmt_num(event_duration, 0, " min") if event_duration is not None else "—"
+    
+        return parsed, evidence
 
-    explanation = str(explanation).strip()
-
-    if not explanation:
-        raise RuntimeError(
-            "Groq returned an empty explanation."
-        )
-
-    return explanation, evidence
-
-def render_ai_explanation(explanation):
-    """Render the LLM response as one clean paragraph with bold highlights."""
-    if not explanation:
+def render_ai_explanation(data):
+    """Render the structured LLM explanation as icon-header sections,
+    matching the dashboard's alert/why/when/action card layout."""
+    if not data:
         return
 
-    text = str(explanation).strip()
+    def esc(s):
+        return html.escape(str(s)) if s is not None else ""
 
-    # Remove accidental headings if the model adds them.
-    text = re.sub(
-        r"^\s*(?:What happened|When|Why it was flagged|What to check)\s*:\s*",
-        "",
-        text,
-        flags=re.I,
-    )
+    headline = esc(data.get("headline", ""))
+    summary = esc(data.get("summary", ""))
+    why_bullets = [esc(b) for b in data.get("why_it_happened", []) if b]
+    action_bullets = [esc(b) for b in data.get("recommended_actions", []) if b]
+    when_time = esc(data.get("when_time", "—"))
+    when_duration = esc(data.get("when_duration", "—"))
 
-    # Keep the response as one paragraph.
-    text = re.sub(r"\s+", " ", text).strip()
-
-    # Escape HTML first for safety.
-    safe = html.escape(text)
-
-    # Convert Markdown bold **text** into HTML bold.
-    safe = re.sub(
-        r"\*\*(.+?)\*\*",
-        r"<strong>\1</strong>",
-        safe
-    )
+    why_html = "".join(f"<li>{b}</li>" for b in why_bullets)
+    action_html = "".join(f"<li>{b}</li>" for b in action_bullets)
 
     st.markdown(
         f'''
         <div class="ai-card">
-            <div class="ai-body">{safe}</div>
+            <div class="ai-alert-box">
+                <div class="ai-alert-icon">⚠️</div>
+                <div>
+                    <div class="ai-alert-title">{headline}</div>
+                    <div class="ai-alert-desc">{summary}</div>
+                </div>
+            </div>
+
+            <div class="ai-section">
+                <div class="ai-section-header">
+                    <span class="ai-section-icon">🔍</span> Why it happened?
+                </div>
+                <ul class="ai-bullets">{why_html}</ul>
+            </div>
+
+            <div class="ai-section">
+                <div class="ai-section-header">
+                    <span class="ai-section-icon">🕐</span> When it occurred?
+                </div>
+                <div class="ai-meta-row">
+                    <div>
+                        <div class="ai-meta-label">Time</div>
+                        <div class="ai-meta-value">{when_time}</div>
+                    </div>
+                    <div>
+                        <div class="ai-meta-label">Duration</div>
+                        <div class="ai-meta-value">~{when_duration}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="ai-section">
+                <div class="ai-section-header">
+                    <span class="ai-section-icon">🔧</span> Recommended action
+                </div>
+                <ul class="ai-bullets">{action_html}</ul>
+            </div>
+
+            <div class="ai-footer-note">
+                <span>ℹ️</span>
+                <span>This explanation is based on the observed patterns in your data
+                and the trained anomaly detection model. It does not confirm a fault
+                but helps you understand the possible cause and impact.</span>
+            </div>
         </div>
         ''',
         unsafe_allow_html=True,
     )
-
 # ============================================================
 # HEADER
 # ============================================================
