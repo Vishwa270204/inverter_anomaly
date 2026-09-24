@@ -1793,10 +1793,6 @@ if len(events_df) > 0:
         else:
             st.info("Not enough history is available to draw the event trend.")
 
-       
-        with st.expander("Raw event data (for reference)"):
-            st.dataframe(event_rows, width="stretch", hide_index=True)
-
     # RIGHT: AI explanation + compact validation
     with ai_col:
         ai_header_col, ai_button_col = st.columns([3.8, 1.5])
