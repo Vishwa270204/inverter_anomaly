@@ -15,6 +15,7 @@ import html
 import json
 import os
 import re
+import textwrap
 from datetime import datetime, timedelta
 from data_validation import validate_event_data, summarize as summarize_data
 import pandas as pd
@@ -1155,8 +1156,8 @@ def render_ai_explanation(data):
     why_html = "".join(f"<li>{b}</li>" for b in why_bullets)
     action_html = "".join(f"<li>{b}</li>" for b in action_bullets)
 
-    st.markdown(
-        f'''
+        st.markdown(
+        textwrap.dedent(f'''
         <div class="ai-card">
             <div class="ai-alert-box">
                 <div class="ai-alert-icon">⚠️</div>
@@ -1203,10 +1204,9 @@ def render_ai_explanation(data):
                 but helps you understand the possible cause and impact.</span>
             </div>
         </div>
-        ''',
+        '''),
         unsafe_allow_html=True,
     )
-
 # ============================================================
 # HEADER
 # ============================================================
