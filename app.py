@@ -1837,7 +1837,7 @@ if len(events_df) > 0:
                 unsafe_allow_html=True,
             )
 
-            important_names = {"Event time & duration", "Numerical values", "Power change direction", "Temperature / threshold claim", "Causal claim strength", "Recommendation grounding"}
+            important_names = {"Event time & duration", "Numerical values", "Power change direction", "Temperature / threshold claim"}
             important = [r for r in merged_checks if r["name"] in important_names]
             for check in important:
                 status = check["status"]
