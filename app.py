@@ -1172,8 +1172,7 @@ def render_ai_explanation(data):
     why_html = "".join(f"<li>{b}</li>" for b in why_bullets)
     action_html = "".join(f"<li>{b}</li>" for b in action_bullets)
 
-    st.markdown(
-        textwrap.dedent(f'''
+    html_block = textwrap.dedent(f'''
         <div class="ai-card">
             <div class="ai-alert-box">
                 <div class="ai-alert-icon">⚠️</div>
@@ -1220,9 +1219,18 @@ def render_ai_explanation(data):
                 but helps you understand the possible cause and impact.</span>
             </div>
         </div>
-        '''),
-        unsafe_allow_html=True,
-    )
+        ''')
+
+    # textwrap.dedent only removes the COMMON leading whitespace across all
+    # lines; deeply-nested lines still keep some indentation. Markdown's
+    # HTML-block parser treats a block of raw HTML as ending at the first
+    # blank line -- and once that happens, any left-over 4+ space indent on
+    # the next line gets read as an "indented code block" instead of HTML.
+    # Stripping ALL leading whitespace from every line (regardless of
+    # nesting) prevents that, blank lines or not.
+    html_block = re.sub(r"(?m)^[ \t]+", "", html_block).strip()
+
+    st.markdown(html_block, unsafe_allow_html=True)
 
 # ============================================================
 # HEADER
