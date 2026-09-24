@@ -1156,7 +1156,7 @@ def render_ai_explanation(data):
     why_html = "".join(f"<li>{b}</li>" for b in why_bullets)
     action_html = "".join(f"<li>{b}</li>" for b in action_bullets)
 
-        st.markdown(
+    st.markdown(
         textwrap.dedent(f'''
         <div class="ai-card">
             <div class="ai-alert-box">
