@@ -60,56 +60,28 @@ st.markdown(
 
     .stApp { background-color: var(--bg); }
 
+    /* Fit the whole app to the viewport width and cut wasted vertical
+       space so pages need far less scrolling. */
+    /* Streamlit's fixed top toolbar (Share/star/menu icons) sits above our
+       content. Shrink it and give the block-container just enough top
+       clearance to sit below it instead of being hidden underneath it. */
     header[data-testid="stHeader"] {
-        height: 2.2rem;
+        height: 2.4rem;
         background: transparent;
     }
     .block-container {
-        padding-top: 2.4rem;
+        padding-top: 2.6rem;
         padding-bottom: 0.5rem;
-        padding-left: 1.4rem;
-        padding-right: 1.4rem;
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
         max-width: 100%;
     }
 
-    [data-testid="stVerticalBlock"] { gap: 0.3rem; }
+    /* Tighten the default gap Streamlit puts between stacked elements */
+    [data-testid="stVerticalBlock"] { gap: 0.35rem; }
     div[data-testid="stElementContainer"] { margin-bottom: 0 !important; }
 
-    /* ---------- Section cards ---------- */
-    /* Each major section of the dashboard lives in its own st.container(key=...)
-       so it can be targeted here and given a rounded card with a soft tinted
-       background -- this makes the page read as distinct blocks instead of
-       one long, undifferentiated scroll. Streamlit exposes a container's
-       `key` as the class `st-key-<key>` on its wrapping div. */
-    .st-key-sec-overview,
-    .st-key-sec-baseline,
-    .st-key-sec-chart,
-    .st-key-sec-event,
-    .st-key-sec-table {
-        border-radius: 14px;
-        border: 1px solid var(--border);
-        padding: 1rem 1.15rem 1.1rem 1.15rem;
-        margin: 0 0 0.85rem 0;
-    }
-    .st-key-sec-overview { background: #F3F8FE; border-color: #DCEAFB; }
-    .st-key-sec-baseline { background: #F2FAF6; border-color: #D7F0E3; }
-    .st-key-sec-chart    { background: #F8FAFC; border-color: #E2E8F0; }
-    .st-key-sec-event    { background: #FFF9F0; border-color: #FBE8C8; }
-    .st-key-sec-table    { background: #F7F5FE; border-color: #E6E0FB; }
-
-    /* Metrics/dataframes inside a tinted section card should look embedded
-       rather than floating as separate white boxes with their own shadow. */
-    .st-key-sec-overview [data-testid="stMetric"],
-    .st-key-sec-baseline [data-testid="stMetric"],
-    .st-key-sec-chart [data-testid="stMetric"],
-    .st-key-sec-event [data-testid="stMetric"],
-    .st-key-sec-table [data-testid="stMetric"] {
-        box-shadow: none;
-    }
-
-    .section-title { color: #0F172A; font-size: 1.28rem; font-weight: 700; line-height: 1.25; margin: 0 0 0.15rem 0; }
-    .section-caption { color: #64748B; font-size: 0.85rem; line-height: 1.4; margin-bottom: 0.65rem; }
-
+    /* Date inputs / selects / checkboxes: shrink their control height */
     [data-testid="stDateInput"] input,
     [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
         min-height: 2rem !important;
@@ -118,6 +90,7 @@ st.markdown(
     }
     [data-testid="stWidgetLabel"] p { margin-bottom: 0.1rem !important; }
 
+    /* ---------- Metric / KPI cards ---------- */
     [data-testid="stMetric"] {
         background: var(--surface);
         border: 1px solid var(--border);
@@ -162,6 +135,7 @@ st.markdown(
     font-size: 15px;
     font-weight: 600;
 }
+    /* ---------- Headings ---------- */
     h2, [data-testid="stMarkdownContainer"] h2 {
         color: #0F172A;
         font-size: 1.55rem !important;
@@ -188,10 +162,12 @@ st.markdown(
 
     hr { border-color: var(--border) !important; margin: 0.5rem 0 !important; }
 
+    /* ---------- Captions ---------- */
     [data-testid="stCaptionContainer"], .stCaption {
         margin-bottom: 0.2rem !important;
     }
 
+    /* ---------- Buttons ---------- */
     .stButton > button {
         border-radius: 8px;
         font-weight: 600;
@@ -206,6 +182,7 @@ st.markdown(
         border-color: #0B2740;
     }
 
+    /* ---------- Expanders / bordered containers ---------- */
     .streamlit-expanderHeader { font-weight: 600; border-radius: 8px; }
     [data-testid="stExpander"] {
         border: 1px solid var(--border);
@@ -216,22 +193,26 @@ st.markdown(
         border-radius: 10px !important;
         padding: 0.5rem 0.9rem !important;
     }
+    /* Bordered containers (e.g. the filter bar) get compact inner padding */
     div[data-testid="stVerticalBlockBorderWrapper"] > div > div[data-testid="stVerticalBlock"] {
         gap: 0.3rem;
     }
 
+    /* ---------- Dataframes ---------- */
     [data-testid="stDataFrame"] {
         border: 1px solid var(--border);
         border-radius: 10px;
         overflow: hidden;
     }
 
+    /* ---------- Form labels ---------- */
     label, .stSelectbox label, .stDateInput label {
         font-weight: 600 !important;
         font-size: 0.83rem !important;
         color: #334155 !important;
     }
 
+    /* ---------- AI Explanation ---------- */
     .ai-title {
         color: #0F172A;
         font-size: 1.8rem;
@@ -320,11 +301,13 @@ st.markdown(
         line-height: 1.5;
     }
 
+    /* Give the AI action row a little more breathing room. */
     .ai-action-row {
         margin-top: 0.1rem;
         margin-bottom: 0.65rem;
     }
 
+    /* ---------- AI Explanation: structured card ---------- */
     .ai-alert-box {
         display: flex;
         gap: 0.65rem;
@@ -370,6 +353,7 @@ st.markdown(
         line-height: 1.5;
     }
 
+    /* ---------- Selected event / validation layout ---------- */
     .event-summary-card { background:#FFFFFF; border:1px solid #D9E1EA; border-radius:12px; padding:1rem 1.1rem; box-shadow:0 1px 4px rgba(15,23,42,0.04); margin-bottom:0.7rem; }
     .event-summary-title { color:#0F172A; font-size:1.15rem; font-weight:700; margin-bottom:0.7rem; }
     .event-badge { display:inline-block; padding:0.22rem 0.55rem; border-radius:999px; background:#FFF1F2; color:#C0262D; border:1px solid #FECDD3; font-size:0.78rem; font-weight:600; margin-left:0.35rem; }
@@ -398,6 +382,10 @@ st.markdown(
 
 st.session_state.setdefault("ai_explanations", {})
 
+# One-time migration: the explanation format changed from a plain paragraph
+# string to a structured dict (headline / summary / why / actions). Drop any
+# old-format cached entries so they regenerate instead of breaking the new
+# renderer or being mistaken for the new shape.
 _stale_keys = [
     k for k, v in st.session_state["ai_explanations"].items()
     if isinstance(v, dict) and isinstance(v.get("explanation"), str)
@@ -476,6 +464,10 @@ if df.empty:
     st.error("`dashboard_data.parquet` loaded but contains no rows.")
     st.stop()
 
+# trend_data.parquet is optional: it adds pre-evaluation history for the
+# Trends tab and for the 24-hour "before an anomaly" context. If it hasn't
+# been generated yet (see notebook Section 19), fall back to using the
+# dashboard data alone instead of crashing the whole app.
 try:
     trend_df = load_trend_data("trend_data.parquet")
     has_trend_data = True
@@ -528,6 +520,8 @@ def get_groq_client():
     return Groq(api_key=api_key)
 
 
+# Controlled backend tools used by the AI analyst. The LLM can request
+# evidence, but it never gets arbitrary Python/database access.
 def clean_value(value):
     if value is None or pd.isna(value):
         return None
@@ -824,10 +818,18 @@ def generate_ai_explanation(selected_event, event_rows):
             "or Streamlit secrets."
         )
 
+    # ------------------------------------------------------------
+    # 1. EVENT INFORMATION
+    # ------------------------------------------------------------
+
     event_start = clean_value(selected_event.get("start_time"))
     event_end = clean_value(selected_event.get("end_time"))
     event_duration = clean_value(selected_event.get("duration_min"))
     anomaly_count = clean_value(selected_event.get("anomaly_count"))
+
+    # ------------------------------------------------------------
+    # 2. COLLECT EVENT EVIDENCE
+    # ------------------------------------------------------------
 
     evidence = {
         "event": {
@@ -850,6 +852,10 @@ def generate_ai_explanation(selected_event, event_rows):
             ),
         }
     }
+
+    # ------------------------------------------------------------
+    # 3. EVENT OBSERVATIONS
+    # ------------------------------------------------------------
 
     if event_rows is not None and not event_rows.empty:
 
@@ -898,6 +904,10 @@ def generate_ai_explanation(selected_event, event_rows):
             "statistics": event_statistics,
         }
 
+        # --------------------------------------------------------
+        # 4. OPERATING CONDITIONS DURING EVENT
+        # --------------------------------------------------------
+
         context_columns = [
             "inverter_status",
             "is_daylight",
@@ -929,6 +939,10 @@ def generate_ai_explanation(selected_event, event_rows):
 
         evidence["operating_context"] = operating_context
 
+        # --------------------------------------------------------
+        # 5. FEATURE CONTRIBUTIONS
+        # --------------------------------------------------------
+
         contribution_cols = get_contribution_cols(event_rows)
 
         if contribution_cols:
@@ -951,6 +965,10 @@ def generate_ai_explanation(selected_event, event_rows):
                 }
                 for col, value in contribution_values.head(5).items()
             ]
+
+        # --------------------------------------------------------
+        # 6. PRE-EVENT TREND
+        # --------------------------------------------------------
 
         trend, _ = get_trend_window(
             trend_df,
@@ -1003,6 +1021,10 @@ def generate_ai_explanation(selected_event, event_rows):
                 "statistics": trend_statistics,
             }
 
+    # ------------------------------------------------------------
+    # 7. HEALTHY BASELINE
+    # ------------------------------------------------------------
+
     try:
 
         if event_rows is not None and not event_rows.empty:
@@ -1018,6 +1040,10 @@ def generate_ai_explanation(selected_event, event_rows):
     except Exception as e:
 
         evidence["healthy_baseline_error"] = str(e)
+
+    # ------------------------------------------------------------
+    # 8. AI PROMPT
+    # ------------------------------------------------------------
 
     prompt = """
         You are an explanation assistant inside a solar inverter anomaly detection dashboard.
@@ -1051,6 +1077,17 @@ def generate_ai_explanation(selected_event, event_rows):
             ensure_ascii=False
         )
 
+    # ------------------------------------------------------------
+    # 9. GROQ REQUEST
+    # ------------------------------------------------------------
+    # Two layers of defense against malformed JSON from the model:
+    #   1. response_format={"type": "json_object"} asks Groq to constrain
+    #      generation to valid JSON in the first place.
+    #   2. If parsing still fails (rare -- e.g. a stray unescaped quote
+    #      inside a bullet string), send the broken output back once with
+    #      the exact parser error and ask the model to fix it, instead of
+    #      failing the whole explanation.
+
     def _call_groq(messages):
         try:
             response = client.chat.completions.create(
@@ -1070,6 +1107,7 @@ def generate_ai_explanation(selected_event, event_rows):
             raise RuntimeError("Groq returned no text content.")
 
         content = str(content).strip()
+        # Strip accidental ```json fences some models add despite instructions.
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content).strip()
 
         if not content:
@@ -1083,6 +1121,8 @@ def generate_ai_explanation(selected_event, event_rows):
     try:
         parsed = json.loads(raw_content)
     except Exception as first_error:
+        # Repair attempt: show the model its own broken output and the
+        # exact parser error, and ask for a corrected JSON object only.
         repair_messages = base_messages + [
             {"role": "assistant", "content": raw_content},
             {
@@ -1112,6 +1152,8 @@ def generate_ai_explanation(selected_event, event_rows):
     if missing:
         raise RuntimeError(f"Groq JSON is missing required fields: {missing}")
 
+    # "When it occurred" is computed from data Python already trusts --
+    # never taken from the LLM.
     parsed["when_time"] = fmt_time(event_start)
     parsed["when_duration"] = (
         fmt_num(event_duration, 0, " min") if event_duration is not None else "—"
@@ -1126,6 +1168,8 @@ def render_ai_explanation(data):
     if not data:
         return
 
+    # Backward compatibility: older cached entries (before the structured
+    # JSON format) stored a plain paragraph string instead of a dict.
     if isinstance(data, str):
         text = re.sub(r"\s+", " ", data).strip()
         safe = html.escape(text)
@@ -1198,6 +1242,13 @@ def render_ai_explanation(data):
         </div>
         ''')
 
+    # textwrap.dedent only removes the COMMON leading whitespace across all
+    # lines; deeply-nested lines still keep some indentation. Markdown's
+    # HTML-block parser treats a block of raw HTML as ending at the first
+    # blank line -- and once that happens, any left-over 4+ space indent on
+    # the next line gets read as an "indented code block" instead of HTML.
+    # Stripping ALL leading whitespace from every line (regardless of
+    # nesting) prevents that, blank lines or not.
     html_block = re.sub(r"(?m)^[ \t]+", "", html_block).strip()
 
     st.markdown(html_block, unsafe_allow_html=True)
@@ -1213,6 +1264,7 @@ def validate_ai_explanation(explanation, evidence, event_rows, selected_event, b
     def add(name, status, detail):
         checks.append({"name": name, "status": status, "detail": detail})
 
+    # 1) Event time & duration
     expected_start = pd.to_datetime(selected_event.get("start_time"))
     expected_end = pd.to_datetime(selected_event.get("end_time"))
     expected_duration = float(selected_event.get("duration_min", 0) or 0)
@@ -1231,6 +1283,7 @@ def validate_ai_explanation(explanation, evidence, event_rows, selected_event, b
     text_parts += [str(x) for x in explanation.get("recommended_actions", []) if x]
     ai_text = " ".join(text_parts).lower()
 
+    # 2) Power change direction
     direction_errors = []
     for col, label in [("dc_power_kw", "DC power"), ("ac_power_kw", "AC power")]:
         stats = evidence.get("event_observations", {}).get("statistics", {}).get(col, {})
@@ -1257,6 +1310,8 @@ def validate_ai_explanation(explanation, evidence, event_rows, selected_event, b
         "AC/DC power direction matches the event data." if not direction_errors else "; ".join(direction_errors),
     )
 
+    # 3) Numerical values. Approximate language such as "about", "roughly",
+    # "approximately" and "~" is intentionally allowed within tolerance.
     known_numbers = []
     for metric in evidence.get("event_observations", {}).get("statistics", {}).values():
         if not isinstance(metric, dict):
@@ -1288,6 +1343,8 @@ def validate_ai_explanation(explanation, evidence, event_rows, selected_event, b
     unmatched = []
     for raw, unit in numeric_claims:
         value = float(raw)
+        # 1.5% relative tolerance, with a minimum absolute tolerance of 2
+        # units, so "roughly 70 kW" can match an actual 70-71 kW change.
         if not any(abs(value - k) <= max(2.0, abs(k) * 0.015) for k in known_numbers):
             unmatched.append(f"{raw} {unit}")
 
@@ -1298,6 +1355,9 @@ def validate_ai_explanation(explanation, evidence, event_rows, selected_event, b
         else "Unmatched numeric claims: " + ", ".join(unmatched[:5]),
     )
 
+    # 4) Temperature / threshold claims.
+    # If the explanation mentions a limit but no independently supplied
+    # temperature reference exists, mark it REVIEW/WARN rather than FAIL.
     temp_stats = evidence.get("event_observations", {}).get("statistics", {}).get("inverter_temperature_c", {})
     temp_ref = evidence.get("healthy_baseline", {}).get("reference", {}).get("inverter_temperature_c", {})
     threshold_words = ["healthy limit", "upper healthy", "upper limit", "below", "within normal", "normal limit"]
@@ -1354,6 +1414,11 @@ st.markdown(
 # FILTERS (inline row, real bordered container)
 # ============================================================
 
+# The date picker covers the FULL dataset (trend_data.parquet goes back
+# further than the scored evaluation period in dashboard_data.parquet), so
+# users can browse raw history even for dates that weren't scored for
+# anomalies. If trend_data.parquet isn't available yet, this just falls
+# back to the evaluation period's own range.
 eval_min_date = df["timestamp"].min().date()
 eval_max_date = df["timestamp"].max().date()
 min_date = min(eval_min_date, trend_df["timestamp"].min().date())
@@ -1487,10 +1552,15 @@ def build_anomaly_events(anomaly_df, gap_minutes=6):
 # FILTER DATA
 # ============================================================
 
+# filtered_df: the scored evaluation data (has anomaly results) -- powers
+# the KPIs, Overview chart, Anomalies table, and Investigate tab.
 if start_date <= end_date:
     filtered_df = df[
         (df["timestamp"].dt.date >= start_date) & (df["timestamp"].dt.date <= end_date)
     ].copy()
+    # filtered_trend_df: the full raw history -- powers the Trends tab so
+    # dates before the evaluation period still show something (falls back
+    # to filtered_df itself when trend_data.parquet isn't available).
     filtered_trend_df = trend_df[
         (trend_df["timestamp"].dt.date >= start_date) & (trend_df["timestamp"].dt.date <= end_date)
     ].copy()
@@ -1526,6 +1596,7 @@ anomaly_df = (
     else filtered_df.copy()
 )
 
+# Build continuous anomaly events
 events_df = build_anomaly_events(
     anomaly_df,
     gap_minutes=6
@@ -1750,6 +1821,9 @@ if len(events_df) > 0:
         elif cached.get("explanation"):
             render_ai_explanation(cached["explanation"])
 
+            # Run the detailed evidence/data plumbing validation internally,
+            # but do not expose its many low-level checks in the dashboard.
+            # The UI shows only the four meaningful explanation checks below.
             try:
                 validate_event_data(
                     evidence=cached["evidence"],
