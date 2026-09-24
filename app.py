@@ -453,8 +453,12 @@ def safe_load(loader, path, label):
         st.error(f"Failed to load **{label}** (`{path}`): {e}")
         st.stop()
 
-
 df = safe_load(load_dashboard_data, "dashboard_data.parquet", "Dashboard data")
+persistence_config = load_persistence_config(
+    "persistence_config.json"
+)
+
+
 baseline_df = safe_load(
     load_dashboard_baseline,
     "dashboard_baseline.parquet",
@@ -1479,70 +1483,171 @@ with st.container(border=True):
 # BUILD ANOMALY EVENTS
 # ============================================================
 
-def build_anomaly_events(anomaly_df, gap_minutes=6):
+def build_anomaly_events(anomaly_df):
     """
-    Group continuous anomaly observations into anomaly events.
+    Build persistent anomaly events.
 
-    One event = continuous occurrence of anomaly.
-    A new event starts when the gap between two anomaly
-    observations is greater than gap_minutes.
+    Fixed rule:
+        - Event must contain at least 60 minutes of continuous anomaly.
+        - Current data sampling interval is 5 minutes.
+        - Therefore 12 consecutive anomaly points = 60 minutes of coverage.
+        - A gap greater than 7.5 minutes breaks the event.
     """
 
     if anomaly_df.empty:
         return pd.DataFrame()
 
-    work = anomaly_df.copy()
-    work["timestamp"] = pd.to_datetime(work["timestamp"])
-    work = work.sort_values("timestamp").reset_index(drop=True)
+    # --------------------------------------------------------
+    # FIXED EVENT RULE
+    # --------------------------------------------------------
+    EVENT_DURATION_MIN = 60
+    SAMPLE_INTERVAL_MIN = 5
 
-    time_gap = work["timestamp"].diff().dt.total_seconds() / 60
-
-    work["event_break"] = (
-        time_gap.isna() |
-        (time_gap > gap_minutes)
+    # 60 minutes / 5 minutes = 12 points
+    PERSISTENCE_MIN_POINTS = int(
+        EVENT_DURATION_MIN / SAMPLE_INTERVAL_MIN
     )
 
-    work["event_number"] = work["event_break"].cumsum()
+    # Allow normal timestamp spacing, but break larger gaps
+    MAX_RUN_GAP_MIN = SAMPLE_INTERVAL_MIN * 1.5
 
+    # --------------------------------------------------------
+    # PREPARE DATA
+    # --------------------------------------------------------
+    work = anomaly_df.copy()
+
+    work["timestamp"] = pd.to_datetime(
+        work["timestamp"],
+        errors="coerce"
+    )
+
+    work = (
+        work
+        .dropna(subset=["timestamp"])
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
+
+    if work.empty:
+        return pd.DataFrame()
+
+    # --------------------------------------------------------
+    # FIND CONTINUOUS ANOMALY RUNS
+    # --------------------------------------------------------
+    time_gap = (
+        work["timestamp"]
+        .diff()
+        .dt.total_seconds()
+        / 60.0
+    )
+
+    work["event_break"] = (
+        time_gap.isna()
+        | (time_gap > MAX_RUN_GAP_MIN)
+    )
+
+    work["run_id"] = work["event_break"].cumsum()
+
+    # --------------------------------------------------------
+    # KEEP ONLY 60-MINUTE PERSISTENT EVENTS
+    # --------------------------------------------------------
+    run_sizes = work.groupby("run_id").size()
+
+    persistent_run_ids = run_sizes[
+        run_sizes >= PERSISTENCE_MIN_POINTS
+    ].index
+
+    work = work[
+        work["run_id"].isin(persistent_run_ids)
+    ].copy()
+
+    if work.empty:
+        return pd.DataFrame()
+
+    # --------------------------------------------------------
+    # CREATE EVENT SUMMARY
+    # --------------------------------------------------------
     events = []
 
-    for event_number, event_rows in work.groupby("event_number"):
+    for event_number, (run_id, event_rows) in enumerate(
+        work.groupby("run_id"),
+        start=1
+    ):
+
+        event_rows = (
+            event_rows
+            .sort_values("timestamp")
+            .reset_index(drop=True)
+        )
 
         start_time = event_rows["timestamp"].min()
         end_time = event_rows["timestamp"].max()
 
+        # 12 points at 5-minute sampling cover 60 minutes
+        duration_min = (
+            (end_time - start_time).total_seconds() / 60.0
+        ) + SAMPLE_INTERVAL_MIN
+
         event = {
-            "event_id": f"Event {int(event_number)}",
+            "event_id": f"Event {event_number}",
+            "run_id": int(run_id),
             "start_time": start_time,
             "end_time": end_time,
-            "duration_min": (
-                end_time - start_time
-            ).total_seconds() / 60,
+            "duration_min": duration_min,
             "anomaly_count": len(event_rows),
+            "is_persistent_event": True,
         }
 
+        # ----------------------------------------------------
+        # SEVERITY
+        # ----------------------------------------------------
         if "anomaly_score_ratio" in event_rows.columns:
-            event["max_severity"] = event_rows["anomaly_score_ratio"].max()
-            event["mean_severity"] = event_rows["anomaly_score_ratio"].mean()
 
+            scores = pd.to_numeric(
+                event_rows["anomaly_score_ratio"],
+                errors="coerce"
+            )
+
+            event["max_severity"] = scores.max()
+            event["mean_severity"] = scores.mean()
+
+        # ----------------------------------------------------
+        # RECONSTRUCTION ERROR
+        # ----------------------------------------------------
         if "reconstruction_error" in event_rows.columns:
-            event["max_reconstruction_error"] = (
-                event_rows["reconstruction_error"].max()
-            )
-            event["mean_reconstruction_error"] = (
-                event_rows["reconstruction_error"].mean()
+
+            errors = pd.to_numeric(
+                event_rows["reconstruction_error"],
+                errors="coerce"
             )
 
+            event["max_reconstruction_error"] = errors.max()
+            event["mean_reconstruction_error"] = errors.mean()
+
+        # ----------------------------------------------------
+        # DOMINANT INVERTER STATUS
+        # ----------------------------------------------------
         if "inverter_status" in event_rows.columns:
+
             mode = event_rows["inverter_status"].mode()
+
             event["dominant_status"] = (
-                mode.iloc[0] if len(mode) else None
+                mode.iloc[0]
+                if len(mode)
+                else None
             )
 
+        # ----------------------------------------------------
+        # DOMINANT ANOMALY TYPE
+        # ----------------------------------------------------
         if "anomaly_type" in event_rows.columns:
+
             mode = event_rows["anomaly_type"].mode()
+
             event["anomaly_type"] = (
-                mode.iloc[0] if len(mode) else None
+                mode.iloc[0]
+                if len(mode)
+                else None
             )
 
         events.append(event)
@@ -1597,11 +1702,7 @@ anomaly_df = (
 )
 
 # Build continuous anomaly events
-events_df = build_anomaly_events(
-    anomaly_df,
-    gap_minutes=6
-)
-
+events_df = build_anomaly_events(anomaly_df)
 
 # ------------------------------------------------------------
 # OVERVIEW
