@@ -454,9 +454,6 @@ def safe_load(loader, path, label):
         st.stop()
 
 df = safe_load(load_dashboard_data, "dashboard_data.parquet", "Dashboard data")
-persistence_config = load_persistence_config(
-    "persistence_config.json"
-)
 
 
 baseline_df = safe_load(
