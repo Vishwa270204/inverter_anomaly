@@ -1099,6 +1099,18 @@ def render_ai_explanation(data):
     if not data:
         return
 
+    # Backward compatibility: older cached entries (before the structured
+    # JSON format) stored a plain paragraph string instead of a dict.
+    if isinstance(data, str):
+        text = re.sub(r"\s+", " ", data).strip()
+        safe = html.escape(text)
+        safe = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
+        st.markdown(
+            f'<div class="ai-card"><div class="ai-body">{safe}</div></div>',
+            unsafe_allow_html=True,
+        )
+        return
+
     def esc(s):
         return html.escape(str(s)) if s is not None else ""
 
@@ -1571,7 +1583,17 @@ if regenerate or cached is None:
                 "error": str(e),
             }
 
-        st.session_state["ai_explanations"][anomaly_key] = cached
+        st.session_state.setdefault("ai_explanations", {})
+
+        # One-time migration: the explanation format changed from a plain string
+        # to a structured dict. Drop any old-format cached entries so they get
+        # regenerated instead of crashing render_ai_explanation.
+        _stale = [
+            k for k, v in st.session_state["ai_explanations"].items()
+            if isinstance(v, dict) and isinstance(v.get("explanation"), str)
+        ]
+        for k in _stale:
+            del st.session_state["ai_explanations"][k]
 
 
 # ------------------------------------------------------------
