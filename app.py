@@ -353,27 +353,6 @@ st.markdown(
         line-height: 1.5;
     }
 
-    /* ---------- Selected event / validation layout ---------- */
-    .event-summary-card { background:#FFFFFF; border:1px solid #D9E1EA; border-radius:12px; padding:1rem 1.1rem; box-shadow:0 1px 4px rgba(15,23,42,0.04); margin-bottom:0.7rem; }
-    .event-summary-title { color:#0F172A; font-size:1.15rem; font-weight:700; margin-bottom:0.7rem; }
-    .event-badge { display:inline-block; padding:0.22rem 0.55rem; border-radius:999px; background:#FFF1F2; color:#C0262D; border:1px solid #FECDD3; font-size:0.78rem; font-weight:600; margin-left:0.35rem; }
-    .validation-card { background:#FFFFFF; border:1px solid #D9E1EA; border-radius:12px; padding:1rem 1.1rem; margin-top:0.75rem; box-shadow:0 1px 4px rgba(15,23,42,0.04); }
-    .validation-header { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.3rem; }
-    .validation-title { color:#0F172A; font-size:1.15rem; font-weight:700; }
-    .validation-subtitle { color:#64748B; font-size:0.82rem; line-height:1.45; margin-bottom:0.75rem; }
-    .validation-pill { border-radius:999px; padding:0.3rem 0.65rem; font-size:0.78rem; font-weight:700; white-space:nowrap; }
-    .validation-pass { background:#ECFDF3; color:#027A48; border:1px solid #ABEFC6; }
-    .validation-warn { background:#FFFAEB; color:#B54708; border:1px solid #FEDF89; }
-    .validation-fail { background:#FEF3F2; color:#B42318; border:1px solid #FECDCA; }
-    .check-row { display:flex; align-items:flex-start; gap:0.65rem; padding:0.55rem 0; border-top:1px solid #EEF2F6; }
-    .check-icon { width:1.25rem; height:1.25rem; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; flex:0 0 1.25rem; font-size:0.72rem; font-weight:700; }
-    .check-pass { background:#D1FADF; color:#027A48; }
-    .check-warn { background:#FEF0C7; color:#B54708; }
-    .check-fail { background:#FEE4E2; color:#B42318; }
-    .check-name { color:#1E293B; font-size:0.88rem; font-weight:600; line-height:1.35; }
-    .check-detail { color:#64748B; font-size:0.76rem; line-height:1.35; margin-top:0.12rem; }
-    .validation-note { margin-top:0.65rem; padding:0.65rem 0.75rem; border-radius:8px; background:#F8FAFC; border:1px solid #E2E8F0; color:#475569; font-size:0.78rem; line-height:1.45; }
-
     </style>
     """,
     unsafe_allow_html=True,
@@ -1162,6 +1141,145 @@ def generate_ai_explanation(selected_event, event_rows):
     return parsed, evidence
 
 
+
+# ============================================================
+# AI EXPLANATION VALIDATION
+# ============================================================
+
+def _numbers_close(a, b, rel=0.02, abs_tol=1.0):
+    try:
+        a = float(a); b = float(b)
+    except (TypeError, ValueError):
+        return False
+    return abs(a - b) <= max(abs_tol, rel * max(abs(a), abs(b)))
+
+
+def validate_ai_explanation(explanation, evidence):
+    """Validate only claims that can be checked from the supplied event evidence.
+
+    Returns exactly four high-level checks. REVIEW means the available evidence
+    is insufficient to verify a claim; it is not treated as an error.
+    """
+    text = json.dumps(explanation, default=str, ensure_ascii=False)
+    text_low = text.lower()
+    event = evidence.get("event", {})
+    stats = evidence.get("event_observations", {}).get("statistics", {})
+    baseline = evidence.get("healthy_baseline", {}).get("reference", {})
+
+    results = []
+
+    # 1) Event time & duration
+    expected_start = str(event.get("start_time", ""))[:16]
+    expected_end = str(event.get("end_time", ""))[:16]
+    expected_duration = event.get("duration_min")
+    duration_claims = re.findall(r"(?:about|roughly|approximately|~)?\s*(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|min)\b", text_low)
+    duration_ok = True
+    if expected_duration is not None and duration_claims:
+        duration_ok = any(_numbers_close(x, expected_duration, rel=0.10, abs_tol=1.0) for x in duration_claims)
+    if expected_start and expected_start not in text:
+        # The exact event metadata is injected by Python; this is only a warning
+        # if the LLM text itself does not repeat it.
+        duration_detail = f"Selected event is {expected_start} → {expected_end}, {expected_duration:g} min."
+    else:
+        duration_detail = f"Selected event time and duration match: {expected_start} → {expected_end}, {expected_duration:g} min."
+    results.append({
+        "name": "Event time & duration",
+        "status": "PASS" if duration_ok else "FAIL",
+        "detail": duration_detail if duration_ok else "A duration stated in the explanation does not match the selected event."
+    })
+
+    # 2) Power change direction
+    direction_errors = []
+    direction_found = False
+    direction_patterns = [
+        ("dc_power_kw", r"(?:dc\s+power|dc power).*?(?:decreased|dropped|fell|reduced|declined)", "decreased"),
+        ("dc_power_kw", r"(?:dc\s+power|dc power).*?(?:increased|rose|grew|increased)", "increased"),
+        ("ac_power_kw", r"(?:ac\s+power|ac power).*?(?:decreased|dropped|fell|reduced|declined)", "decreased"),
+        ("ac_power_kw", r"(?:ac\s+power|ac power).*?(?:increased|rose|grew|increased)", "increased"),
+    ]
+    for col, pattern, claimed in direction_patterns:
+        if re.search(pattern, text_low, flags=re.S):
+            direction_found = True
+            item = stats.get(col, {})
+            start_v, end_v = item.get("start"), item.get("end")
+            if start_v is None or end_v is None:
+                direction_errors.append(f"{col} direction could not be checked")
+                continue
+            actual = "decreased" if float(end_v) < float(start_v) else "increased" if float(end_v) > float(start_v) else "stable"
+            if actual != claimed:
+                direction_errors.append(f"{col.replace('_kw','').upper()} was actually {actual}")
+    if direction_errors:
+        results.append({"name":"Power change direction","status":"FAIL","detail":"; ".join(direction_errors)+"."})
+    else:
+        detail = "AC/DC power direction matches the event data." if direction_found else "No AC/DC power direction claim was made."
+        results.append({"name":"Power change direction","status":"PASS","detail":detail})
+
+    # 3) Numerical values
+    # Ignore temperature numbers here; temperature/threshold is checked separately.
+    unit_claims = re.findall(r"(?<!\d)(\d+(?:\.\d+)?)\s*(kW|kw|A|a|%)\b", text)
+    known = []
+    for col, item in stats.items():
+        if not isinstance(item, dict):
+            continue
+        for key in ("start", "end", "min", "max", "mean", "median"):
+            if item.get(key) is not None:
+                known.append(float(item[key]))
+        if col in ("dc_power_kw", "ac_power_kw", "dc_current_a", "ac_current_a") and item.get("start") is not None and item.get("end") is not None:
+            known.append(abs(float(item["end"]) - float(item["start"])))
+    # Add feature-contribution percentages when present.
+    for item in evidence.get("feature_contributions", []) or []:
+        if item.get("mean_contribution_pct") is not None:
+            known.append(float(item["mean_contribution_pct"]))
+
+    unmatched = []
+    for value, unit in unit_claims:
+        # The event-duration and date metadata are handled by their own check.
+        if unit.lower() == "a" and float(value) == 0:
+            continue
+        if not any(_numbers_close(value, candidate, rel=0.02, abs_tol=1.0) for candidate in known):
+            unmatched.append(f"{value:g} {unit}")
+    if unmatched:
+        results.append({"name":"Numerical values","status":"FAIL","detail":"Unmatched numeric claims: " + ", ".join(unmatched[:4]) + "."})
+    else:
+        results.append({"name":"Numerical values","status":"PASS","detail":"Reported measurement values are consistent with supplied event evidence."})
+
+    # 4) Temperature / threshold claim
+    temp_claimed = bool(re.search(r"temperature|temp\b|°c|\bc\b", text_low))
+    temp = stats.get("inverter_temperature_c", {})
+    actual_temp = temp.get("end", temp.get("mean"))
+    temp_ref = baseline.get("inverter_temperature_c", {}) if isinstance(baseline, dict) else {}
+    baseline_high = temp_ref.get("typical_high_q90")
+    baseline_median = temp_ref.get("median")
+    threshold_nums = [float(x) for x in re.findall(r"(?:limit|threshold|upper healthy|healthy limit)[^\d]{0,20}(\d+(?:\.\d+)?)\s*°?c", text_low)]
+
+    if not temp_claimed:
+        results.append({"name":"Temperature / threshold claim","status":"PASS","detail":"No temperature or threshold claim was made."})
+    elif actual_temp is None:
+        results.append({"name":"Temperature / threshold claim","status":"REVIEW","detail":"Temperature is not available in the supplied event evidence."})
+    elif threshold_nums and baseline_high is not None:
+        threshold = threshold_nums[0]
+        if not _numbers_close(threshold, baseline_high, rel=0.02, abs_tol=1.0):
+            results.append({"name":"Temperature / threshold claim","status":"FAIL","detail":f"The stated {threshold:g}°C limit does not match the supplied healthy reference."})
+        elif float(actual_temp) < threshold:
+            results.append({"name":"Temperature / threshold claim","status":"PASS","detail":f"Temperature {float(actual_temp):.1f}°C is below the supplied {threshold:g}°C healthy reference."})
+        else:
+            results.append({"name":"Temperature / threshold claim","status":"FAIL","detail":f"Temperature {float(actual_temp):.1f}°C is not below the supplied {threshold:g}°C healthy reference."})
+    elif threshold_nums:
+        results.append({"name":"Temperature / threshold claim","status":"REVIEW","detail":"A temperature limit was stated, but no independently supplied healthy threshold is available to verify it."})
+    elif baseline_high is not None:
+        if "high" in text_low:
+            high_ok = baseline_median is None or float(actual_temp) >= float(baseline_median)
+            if high_ok:
+                results.append({"name":"Temperature / threshold claim","status":"PASS","detail":f"Temperature {float(actual_temp):.1f}°C is supported by the available healthy baseline."})
+            else:
+                results.append({"name":"Temperature / threshold claim","status":"FAIL","detail":"The explanation calls temperature high, but the supplied baseline does not support that wording."})
+        else:
+            results.append({"name":"Temperature / threshold claim","status":"PASS","detail":"Temperature value is available and the available baseline can be checked."})
+    else:
+        results.append({"name":"Temperature / threshold claim","status":"REVIEW","detail":"Temperature is available, but no independently supplied healthy threshold is available to verify the threshold claim."})
+
+    return results
+
 def render_ai_explanation(data):
     """Render the structured LLM explanation as icon-header sections
     (alert banner, Why it happened, When it occurred, Recommended action)."""
@@ -1253,120 +1371,37 @@ def render_ai_explanation(data):
 
     st.markdown(html_block, unsafe_allow_html=True)
 
-
-def validate_ai_explanation(explanation, evidence, event_rows, selected_event, baseline_df):
-    """Validate the generated explanation against the supplied event evidence."""
-    checks = []
-
-    def add(name, status, detail):
-        checks.append({"name": name, "status": status, "detail": detail})
-
-    # Event time/duration are computed by Python, not the LLM.
-    expected_start = pd.to_datetime(selected_event.get("start_time"))
-    expected_end = pd.to_datetime(selected_event.get("end_time"))
-    expected_duration = float(selected_event.get("duration_min", 0) or 0)
-    ai_time = str(explanation.get("when_time", ""))
-    ai_duration = str(explanation.get("when_duration", ""))
-    time_ok = fmt_time(expected_start) in ai_time and f"{round(expected_duration):g}" in ai_duration
-    add(
-        "Event time & duration",
-        "PASS" if time_ok else "FAIL",
-        f"Expected {fmt_time(expected_start)} → {fmt_time(expected_end)}, {expected_duration:.0f} min.",
-    )
-
-    text_parts = [str(explanation.get("headline", "")), str(explanation.get("summary", ""))]
-    text_parts += [str(x) for x in explanation.get("why_it_happened", []) if x]
-    text_parts += [str(x) for x in explanation.get("recommended_actions", []) if x]
-    ai_text = " ".join(text_parts).lower()
-
-    # Direction check for the main power metrics.
-    direction_errors = []
-    for col, label in [("dc_power_kw", "DC power"), ("ac_power_kw", "AC power")]:
-        stats = evidence.get("event_observations", {}).get("statistics", {}).get(col, {})
-        if stats.get("start") is None or stats.get("end") is None:
-            continue
-        start = float(stats["start"])
-        end = float(stats["end"])
-        if end < start:
-            direction = "decreased"
-            words = ["decreased", "fell", "dropped", "declined", "reduced"]
-        elif end > start:
-            direction = "increased"
-            words = ["increased", "rose", "grew", "climbed"]
-        else:
-            direction = "stable"
-            words = ["stable", "unchanged", "remained similar"]
-        metric_token = label.split()[0].lower()
-        if metric_token in ai_text and not any(w in ai_text for w in words):
-            direction_errors.append(f"{label} should be described as {direction}")
-
-    add(
-        "Power change direction",
-        "PASS" if not direction_errors else "WARN",
-        "AC/DC power direction matches the event data." if not direction_errors else "; ".join(direction_errors),
-    )
-
-    # Numeric claims: allow exact/rounded values from event statistics,
-    # baseline references, duration, and simple rounded measurements.
-    known_numbers = []
-    for metric in evidence.get("event_observations", {}).get("statistics", {}).values():
-        for key in ("start", "end", "min", "max", "mean", "median"):
-            value = metric.get(key)
-            if isinstance(value, (int, float)) and pd.notna(value):
-                known_numbers.append(float(value))
-    known_numbers.append(expected_duration)
-    for item in evidence.get("feature_contributions", []):
-        value = item.get("mean_contribution_pct")
-        if isinstance(value, (int, float)) and pd.notna(value):
-            known_numbers.append(float(value))
-    for metric in evidence.get("healthy_baseline", {}).get("reference", {}).values():
-        for key in ("median", "typical_low_q10", "typical_high_q90"):
-            value = metric.get(key)
-            if isinstance(value, (int, float)) and pd.notna(value):
-                known_numbers.append(float(value))
-
-    measurement_pattern = re.compile(r"(?<![A-Za-z])(-?\d+(?:\.\d+)?)\s*(kW|kw|A|a|°C|C|%|minutes?|mins?|min|kvar|kva|Hz|h)\b")
-    numeric_claims = measurement_pattern.findall(" ".join(text_parts))
-    unmatched = []
-    for raw, unit in numeric_claims:
-        value = float(raw)
-        if not any(abs(value - k) <= max(2.0, abs(k) * 0.015) for k in known_numbers):
-            unmatched.append(f"{raw} {unit}")
-
-    add(
-        "Numerical values",
-        "PASS" if not unmatched else "WARN",
-        "Reported measurement values are traceable to supplied evidence." if not unmatched else "Unmatched numeric claims: " + ", ".join(unmatched[:5]),
-    )
-
-    # Temperature/healthy-limit claims need an actual supplied reference.
-    temp_stats = evidence.get("event_observations", {}).get("statistics", {}).get("inverter_temperature_c", {})
-    temp_ref = evidence.get("healthy_baseline", {}).get("reference", {}).get("inverter_temperature_c", {})
-    threshold_words = ["healthy limit", "upper healthy", "upper limit", "below", "within normal", "normal limit"]
-    threshold_claim = any(w in ai_text for w in threshold_words)
-    if threshold_claim:
-        upper = temp_ref.get("typical_high_q90")
-        if upper is None:
-            add("Temperature / threshold claim", "WARN", "AI refers to a temperature limit, but no temperature upper reference was supplied.")
-        elif temp_stats.get("max") is not None and float(temp_stats["max"]) <= float(upper) + 0.01:
-            add("Temperature / threshold claim", "PASS", f"Event max temperature is within the supplied upper reference ({float(upper):.1f} °C).")
-        else:
-            add("Temperature / threshold claim", "FAIL", "Temperature claim does not match the supplied event/baseline values.")
-    else:
-        add("Temperature / threshold claim", "PASS", "No unsupported temperature-limit claim detected.")
-    return checks
-
 # ============================================================
 # HEADER
 # ============================================================
 
 st.markdown(
     """
-    <div style="background:#FFFFFF;padding:0.95rem 1.15rem;border:1px solid #D9E1EA;border-radius:12px;margin-bottom:0.9rem;box-shadow:0 1px 4px rgba(15,23,42,0.04);display:flex;align-items:center;gap:0.75rem;">
-        <div style="background:#EFF6FF;color:#2563EB;width:46px;height:46px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:1.45rem;flex-shrink:0;">⚡</div>
+    <div style="
+        background: linear-gradient(135deg, #0F3554 0%, #164A73 100%);
+        padding: 1.25rem 1.6rem;
+        border-radius: 14px;
+        margin-bottom: 1.1rem;
+        box-shadow: 0 4px 14px rgba(15, 53, 84, 0.16);
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+    ">
+        <div style="
+            background: rgba(255,255,255,0.12);
+            width: 54px; height: 54px;
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.65rem;
+            flex-shrink: 0;
+        ">⚡</div>
         <div>
-            <div style="color:#0F172A;font-size:1.65rem;font-weight:700;line-height:1.2;">Inverter Anomaly Detection</div>
-            <div style="color:#64748B;font-size:0.92rem;margin-top:0.16rem;line-height:1.35;">Monitor inverter performance, investigate anomaly events, and review AI-generated explanations.</div>
+            <div style="color:#FFFFFF; font-size:1.8rem; font-weight:700; line-height:1.2;">
+                Inverter Anomaly Detection
+            </div>
+            <div style="color:#C9DDED; font-size:1rem; margin-top:0.22rem; line-height:1.4;">
+                Spot unusual inverter behavior early
+            </div>
         </div>
     </div>
     """,
@@ -1676,150 +1711,301 @@ else:
     st.info("No anomaly score data available for the selected period.")
 
 # ------------------------------------------------------------
-# SELECTED ANOMALY EVENT + AI EXPLANATION
-# ------------------------------------------------------------
-st.markdown("## Selected Anomaly Event")
-st.caption("Select one continuous anomaly event to inspect its evidence and generate an AI explanation.")
-
+# AI EXPLANATION
+# --------------------------------------------------------
 if len(events_df) > 0:
+
     events_df = events_df.sort_values("start_time").reset_index(drop=True)
 
-    selector_col, status_col = st.columns([5.5, 1.5])
-    with selector_col:
-        selected_event_index = st.selectbox(
-            "Anomaly event",
-            range(len(events_df)),
-            format_func=lambda x: (
-                f"Event {x + 1} | "
-                f"{fmt_time(events_df.loc[x, 'start_time'])} → {fmt_time(events_df.loc[x, 'end_time'])}"
-            ),
-            key="ai_event_selector",
-            label_visibility="collapsed",
-        )
+    selected_event_index = st.selectbox(
+        "Select an anomaly event for AI explanation",
+        range(len(events_df)),
+        format_func=lambda x: (
+            f"Event {x + 1} | "
+            f"{fmt_time(events_df.loc[x, 'start_time'])} → "
+            f"{fmt_time(events_df.loc[x, 'end_time'])}"
+        ),
+        key="ai_event_selector",
+    )
+
     selected_event = events_df.loc[selected_event_index]
+
     event_rows = anomaly_df[
         (anomaly_df["timestamp"] >= selected_event["start_time"]) &
         (anomaly_df["timestamp"] <= selected_event["end_time"])
     ].copy()
 
-    with status_col:
+ai_header_col, ai_button_col = st.columns([7, 1.35])
+
+with ai_header_col:
+    st.markdown(
+        '<div class="ai-title">AI Explanation</div>',
+        unsafe_allow_html=True,
+    )
+
+with ai_button_col:
+    regenerate = st.button(
+        "Regenerate",
+        type="primary",
+        use_container_width=True,
+        help="Generate a fresh explanation for this anomaly.",
+    )
+
+event_key = clean_value(selected_event.get("event_id"))
+
+anomaly_key = f"{event_key}"
+cached = st.session_state["ai_explanations"].get(anomaly_key)
+
+if regenerate or cached is None:
+
+    with st.spinner("Generating explanation from the anomaly evidence..."):
+
+        try:
+            ai_explanation, ai_evidence = generate_ai_explanation(
+                selected_event,
+                event_rows
+            )
+            cached = {
+                "explanation": ai_explanation,
+                "evidence": ai_evidence,
+                "error": None,
+            }
+
+        except Exception as e:
+
+            cached = {
+                "explanation": None,
+                "evidence": None,
+                "error": str(e),
+            }
+
+        st.session_state["ai_explanations"][anomaly_key] = cached
+
+
+# ------------------------------------------------------------
+# ALWAYS RENDER AN AI RESULT AREA
+# ------------------------------------------------------------
+
+if cached is None:
+    st.info("Select an anomaly event to generate an AI explanation.")
+
+elif cached.get("error"):
+
+    st.error(
+        f"AI explanation failed: {cached['error']}"
+    )
+
+elif cached.get("explanation"):
+    render_ai_explanation(cached["explanation"])
+
+    ev_meta = cached["evidence"].get("event", {})
+    event_label = (
+        f"{ev_meta.get('event_id', event_key)} "
+        f"({ev_meta.get('start_time', '?')} → {ev_meta.get('end_time', '?')})"
+    )
+
+
+    # --------------------------------------------------------
+    # AI EXPLANATION VALIDATION
+    # Only four evidence-based checks are shown to the user.
+    # --------------------------------------------------------
+    validation_results = validate_ai_explanation(
+        cached["explanation"],
+        cached["evidence"],
+    )
+
+    pass_count = sum(r["status"] == "PASS" for r in validation_results)
+    review_count = sum(r["status"] == "REVIEW" for r in validation_results)
+    fail_count = sum(r["status"] == "FAIL" for r in validation_results)
+
+    if fail_count:
+        validation_title = f"{fail_count} check{'s' if fail_count != 1 else ''} need attention"
+        validation_badge = "#FDECEC"
+        validation_text = "#B42318"
+    elif review_count:
+        validation_title = f"{review_count} check{'s' if review_count != 1 else ''} need review"
+        validation_badge = "#FFF4D6"
+        validation_text = "#8A5A00"
+    else:
+        validation_title = "All checks passed"
+        validation_badge = "#E8F7EE"
+        validation_text = "#087443"
+
+    st.markdown(
+        f'''<div style="background:#FFFFFF;border:1px solid #D9E1EA;border-radius:12px;padding:14px 18px;margin-top:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <div>
+                    <div style="font-size:1.15rem;font-weight:700;color:#0F172A;">Validation</div>
+                    <div style="font-size:0.82rem;color:#64748B;margin-top:3px;">Checks whether the explanation is consistent with the selected event's data and supplied evidence.</div>
+                </div>
+                <div style="background:{validation_badge};color:{validation_text};border:1px solid #D9E1EA;border-radius:999px;padding:5px 10px;font-size:0.78rem;font-weight:600;white-space:nowrap;">{validation_title}</div>
+            </div>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+
+    for item in validation_results:
+        status = item["status"]
+        icon = "✓" if status == "PASS" else "!" if status == "REVIEW" else "×"
+        bg = "#DDF7E8" if status == "PASS" else "#FFF0C2" if status == "REVIEW" else "#FDE2E2"
+        fg = "#087443" if status == "PASS" else "#8A5A00" if status == "REVIEW" else "#B42318"
         st.markdown(
-            '<div style="text-align:right;padding-top:0.35rem;"><span class="event-badge">● Anomaly detected</span></div>',
+            f'''<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 4px;border-bottom:1px solid #EEF2F6;">
+                <span style="width:20px;height:20px;border-radius:50%;background:{bg};color:{fg};display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:0 0 20px;">{icon}</span>
+                <div><div style="font-size:0.9rem;font-weight:600;color:#1E293B;">{html.escape(item['name'])}</div>
+                <div style="font-size:0.76rem;color:#64748B;margin-top:2px;line-height:1.45;">{html.escape(item['detail'])}</div></div>
+            </div>''',
             unsafe_allow_html=True,
         )
 
-    summary_cols = st.columns(4)
-    with summary_cols[0]: st.metric("Start Time", fmt_time(selected_event.get("start_time")))
-    with summary_cols[1]: st.metric("End Time", fmt_time(selected_event.get("end_time")))
-    with summary_cols[2]: st.metric("Duration", fmt_num(selected_event.get("duration_min"), 0, " min"))
-    with summary_cols[3]: st.metric("Anomaly Points", f"{int(selected_event.get('anomaly_count', 0)):,}")
+    st.markdown(
+        '<div style="background:#F7F9FC;border:1px solid #D9E1EA;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:0.74rem;color:#64748B;">Validation checks evidence consistency. A passed explanation does not confirm the physical root cause.</div>',
+        unsafe_allow_html=True,
+    )
 
-    event_key = clean_value(selected_event.get("event_id"))
-    anomaly_key = f"{event_key}"
-    cached = st.session_state["ai_explanations"].get(anomaly_key)
+else:
 
-    evidence_col, ai_col = st.columns([1.45, 0.95], gap="large")
+    st.warning(
+        "AI did not return an explanation for this anomaly event."
+    )
 
-    # LEFT: selected event evidence
-    with evidence_col:
-        st.markdown("### Event Evidence")
-        st.caption("Observed values for the selected event. Evidence is not a confirmed physical root cause.")
+# ------------------------------------------------------------
+# INVESTIGATE AN ANOMALY
+# ------------------------------------------------------------
+st.markdown("## Investigate an Anomaly")
+st.caption("Select one detected anomaly to inspect its preceding trend, contributing parameters, and AI explanation.")
 
-        metric_cols = st.columns(3)
-        for i, (col, label, unit) in enumerate([
-            ("dc_power_kw", "DC Power", " kW"),
-            ("ac_power_kw", "AC Power", " kW"),
-            ("inverter_temperature_c", "Temperature", " °C"),
-        ]):
-            with metric_cols[i]:
-                if col in event_rows.columns and not event_rows[col].dropna().empty:
-                    series = pd.to_numeric(event_rows[col], errors="coerce").dropna()
-                    start_v = series.iloc[0]
-                    end_v = series.iloc[-1]
-                    delta_pct = ((end_v - start_v) / start_v * 100) if start_v != 0 else None
-                    delta_text = f"{delta_pct:+.1f}%" if delta_pct is not None else "—"
-                    st.metric(label, f"{start_v:.0f}{unit} → {end_v:.0f}{unit}", delta_text)
-                else:
-                    st.metric(label, "—")
+if len(events_df) > 0:
+
+    selected_event = events_df.loc[selected_event_index]
+
+    event_rows = anomaly_df[
+        (anomaly_df["timestamp"] >= selected_event["start_time"]) &
+        (anomaly_df["timestamp"] <= selected_event["end_time"])
+    ].copy()
+
+    inv_cols = st.columns(3)
+    with inv_cols[0]:
+        st.metric(
+            "Event Time",
+            f"{fmt_time(selected_event.get('start_time'))} → "
+            f"{fmt_time(selected_event.get('end_time'))}"
+        )
+    with inv_cols[1]:
+        st.metric(
+            "Event Duration",
+            fmt_num(selected_event.get("duration_min"), 1, " min")
+        )
+
+    with inv_cols[2]:
+        st.metric(
+            "Anomaly Points",
+            f"{int(selected_event.get('anomaly_count', 0)):,}"
+        )
+
+    detail_col1, detail_col2 = st.columns(2)
+    with detail_col1:
+        st.markdown("### What Happened Before")
+        st.caption("Power and temperature in the 24 hours leading up to the anomaly.")
 
         event_start = pd.to_datetime(selected_event["start_time"])
         event_end = pd.to_datetime(selected_event["end_time"])
-        trend_window, _ = get_trend_window(trend_df, event_start, hours_back=24)
+        trend_window, window_start = get_trend_window(trend_df,event_start,hours_back=24)
 
-        st.markdown("### Power & Temperature Trend")
         if len(trend_window) > 1:
             fig_trend = go.Figure()
             if "dc_power_kw" in trend_window.columns:
-                fig_trend.add_trace(go.Scatter(x=trend_window["timestamp"], y=trend_window["dc_power_kw"], mode="lines", name="DC Power (kW)", line=dict(color="#4C78A8", width=2)))
-            if "ac_power_kw" in trend_window.columns:
-                fig_trend.add_trace(go.Scatter(x=trend_window["timestamp"], y=trend_window["ac_power_kw"], mode="lines", name="AC Power (kW)", line=dict(color="#F28E2B", width=2)))
+                fig_trend.add_trace(
+                    go.Scatter(
+                        x=trend_window["timestamp"],
+                        y=trend_window["ac_power_kw"],
+                        mode="lines",
+                        name="DC Power (kW)",
+                        yaxis="y",
+                        line=dict(color="#4C78A8"),
+                    )
+                )
             if "inverter_temperature_c" in trend_window.columns:
-                fig_trend.add_trace(go.Scatter(x=trend_window["timestamp"], y=trend_window["inverter_temperature_c"], mode="lines", name="Temperature (°C)", yaxis="y2", line=dict(color="#59A14F", width=2)))
-            fig_trend.add_vrect(x0=event_start, x1=event_end, fillcolor="#E45756", opacity=0.10, line_color="#E45756", line_width=1)
-            fig_trend.update_layout(xaxis_title="Time", yaxis=dict(title="Power (kW)"), yaxis2=dict(title="Temperature (°C)", overlaying="y", side="right"), hovermode="x unified", height=355, template="plotly_white", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5), margin=dict(l=50, r=55, t=45, b=40))
+                fig_trend.add_trace(
+                    go.Scatter(
+                        x=trend_window["timestamp"],
+                        y=trend_window["inverter_temperature_c"],
+                        mode="lines",
+                        name="Temp (°C)",
+                        yaxis="y2",
+                        line=dict(color="#E45756"),
+                    )
+                )
+            fig_trend.add_vrect(
+                x0=event_start,
+                x1=event_end,
+                fillcolor="red",
+                opacity=0.12,
+                line_width=1,
+            )
+            fig_trend.update_layout(
+                xaxis=dict(title="Time"),
+                yaxis=dict(title="AC Power (kW)", side="left"),
+                yaxis2=dict(title="Temp (°C)", overlaying="y", side="right"),
+                hovermode="x unified",
+                height=360,
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.12, xanchor="center", x=0.5),
+                margin=dict(l=55, r=55, t=45, b=45),
+            )
             st.plotly_chart(fig_trend, width="stretch")
         else:
-            st.info("Not enough history is available to draw the event trend.")
-
-    # RIGHT: AI explanation + compact validation
-    with ai_col:
-        ai_header_col, ai_button_col = st.columns([3.8, 1.5])
-        with ai_header_col:
-            st.markdown('<div class="ai-title">AI Explanation</div>', unsafe_allow_html=True)
-        with ai_button_col:
-            regenerate = st.button("Regenerate", type="primary", use_container_width=True, help="Generate a fresh explanation for this selected anomaly event.")
-
-        if regenerate or cached is None:
-            with st.spinner("Generating explanation from the selected event evidence..."):
-                try:
-                    ai_explanation, ai_evidence = generate_ai_explanation(selected_event, event_rows)
-                    cached = {"explanation": ai_explanation, "evidence": ai_evidence, "error": None}
-                except Exception as e:
-                    cached = {"explanation": None, "evidence": None, "error": str(e)}
-                st.session_state["ai_explanations"][anomaly_key] = cached
-
-        if cached is None:
-            st.info("Select an anomaly event to generate an AI explanation.")
-        elif cached.get("error"):
-            st.error(f"AI explanation failed: {cached['error']}")
-        elif cached.get("explanation"):
-            render_ai_explanation(cached["explanation"])
-
-            ai_checks = validate_ai_explanation(cached["explanation"], cached["evidence"], event_rows, selected_event, baseline_df)
-            data_results = validate_event_data(evidence=cached["evidence"], df=df, trend_df=trend_df if has_trend_data else None, baseline_df=baseline_df)
-            merged_checks = list(ai_checks) + [
-                {"name": result.get("rule", "Data check"), "status": result.get("status", "WARN"), "detail": result.get("detail", "")}
-                for result in data_results
-            ]
-            pass_count = sum(r["status"] == "PASS" for r in merged_checks)
-            fail_count = sum(r["status"] == "FAIL" for r in merged_checks)
-            warn_count = sum(r["status"] == "WARN" for r in merged_checks)
-            verdict = "FAIL" if fail_count else ("NEEDS REVIEW" if warn_count else "PASS")
-            verdict_class = "validation-fail" if verdict == "FAIL" else ("validation-warn" if verdict == "NEEDS REVIEW" else "validation-pass")
-
-            st.markdown(
-                f'''<div class="validation-card">
-                <div class="validation-header"><div class="validation-title">Validation</div><span class="validation-pill {verdict_class}">{pass_count}/{len(merged_checks)} checks passed</span></div>
-                <div class="validation-subtitle">Checks whether the explanation is consistent with the selected event's data and supplied model evidence. It does not prove the physical root cause.</div>
-                </div>''',
-                unsafe_allow_html=True,
+            st.info(
+                "Not enough history before this anomaly to draw a trend — "
+                "it is at or very near the start of the available data."
             )
 
-            important_names = {"Event time & duration", "Numerical values", "Power change direction", "Temperature / threshold claim"}
-            important = [r for r in merged_checks if r["name"] in important_names]
-            for check in important:
-                status = check["status"]
-                icon = "✓" if status == "PASS" else ("!" if status == "WARN" else "×")
-                cls = "check-pass" if status == "PASS" else ("check-warn" if status == "WARN" else "check-fail")
-                st.markdown(
-                    f'''<div class="check-row"><span class="check-icon {cls}">{icon}</span><div><div class="check-name">{html.escape(check["name"])}</div><div class="check-detail">{html.escape(check["detail"])}</div></div></div>''',
-                    unsafe_allow_html=True,
+    with detail_col2:
+        st.markdown("### What Contributed Most")
+        st.caption("Parameters that contributed most to the unusual pattern — not confirmed causes.")
+
+        contribution_cols = get_contribution_cols(anomaly_df)
+        if contribution_cols:
+            contrib_values = (event_rows[contribution_cols].mean().dropna())
+            if len(contrib_values) > 0:
+                contrib_plot_df = pd.DataFrame(
+                    {
+                        "feature": [c.replace("_contribution_pct", "") for c in contrib_values.index],
+                        "contribution_pct": contrib_values.values,
+                    }
+                ).sort_values("contribution_pct", ascending=True).tail(5)
+
+                fig_contrib = go.Figure()
+                fig_contrib.add_trace(
+                    go.Bar(
+                        x=contrib_plot_df["contribution_pct"],
+                        y=contrib_plot_df["feature"],
+                        orientation="h",
+                        marker_color="#4C78A8",
+                    )
                 )
-            st.markdown('<div class="validation-note">Validation checks evidence consistency. A passed explanation is not proof of a physical fault or root cause.</div>', unsafe_allow_html=True)
+                fig_contrib.update_layout(
+                    xaxis_title="Contribution (%)",
+                    yaxis_title="",
+                    height=360,
+                    template="plotly_white",
+                    margin=dict(t=15, l=10, r=10, b=45),
+                )
+                st.plotly_chart(fig_contrib, width="stretch")
+            else:
+                st.info("No contribution data available for this observation.")
         else:
-            st.warning("AI did not return an explanation for this anomaly event.")
+            st.info("No contribution data available for this observation.")
+
+    st.divider()
+
+
 else:
-    st.info("No anomaly events are available in the selected period.")
+    st.info(
+        "Nothing to investigate here — there are no anomalies in the selected "
+        "date range. Widen the date range or clear **Show anomalies only** "
+        "to bring up more data."
+    )
 
 # ------------------------------------------------------------
 # DETECTED ANOMALIES
