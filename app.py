@@ -1039,7 +1039,7 @@ def generate_ai_explanation(selected_event, event_rows):
         IMPORTANT RULES:
         - Use simple words. Avoid technical/ML terms (no autoencoder, reconstruction error,
           threshold, anomaly score, probability, confidence, etc).
-        - Explain as if talking to a normal user, not a data scientist.
+        - Explain as if talking to a plant operator, not a data scientist.
         - Use ONLY the supplied evidence. Never invent measurements, causes, or events.
         - Do not automatically call the anomaly a fault.
         - Feature contributions show which parameters were unusual; they do NOT prove root cause.
