@@ -239,50 +239,7 @@ st.markdown(
         padding: 1.35rem 1.5rem;
         box-shadow: 0 2px 7px rgba(15, 23, 42, 0.05);
     }
-    .ai-alert-box {
-    display: flex;
-    gap: 0.65rem;
-    background: #FEF3F2;
-    border: 1px solid #FECDCA;
-    border-radius: 10px;
-    padding: 0.85rem 1rem;
-    margin-bottom: 1rem;
-}
-.ai-alert-icon { font-size: 1.3rem; line-height: 1.4; flex-shrink: 0; }
-.ai-alert-title { font-weight: 700; color: #B42318; font-size: 1.02rem; margin-bottom: 0.15rem; }
-.ai-alert-desc { color: #7A271A; font-size: 0.95rem; line-height: 1.5; }
 
-.ai-section { margin-top: 1.1rem; }
-.ai-section-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 700;
-    color: #0F172A;
-    font-size: 1rem;
-    margin-bottom: 0.45rem;
-}
-.ai-section-icon { font-size: 1.05rem; }
-
-.ai-bullets { margin: 0; padding-left: 1.3rem; }
-.ai-bullets li { color: #1E293B; font-size: 0.96rem; line-height: 1.55; margin-bottom: 0.3rem; }
-
-.ai-meta-row { display: flex; gap: 2.5rem; flex-wrap: wrap; }
-.ai-meta-label { font-size: 0.82rem; color: #64748B; font-weight: 600; }
-.ai-meta-value { font-size: 0.98rem; color: #0F172A; font-weight: 600; }
-
-.ai-footer-note {
-    display: flex;
-    gap: 0.6rem;
-    background: #F0F6FF;
-    border: 1px solid #D6E4FA;
-    border-radius: 10px;
-    padding: 0.75rem 0.9rem;
-    margin-top: 1.1rem;
-    font-size: 0.85rem;
-    color: #375273;
-    line-height: 1.5;
-}
     .ai-row {
         padding: 0.15rem 0 0.9rem 0;
     }
@@ -306,7 +263,7 @@ st.markdown(
         word-break: normal;
         overflow-wrap: anywhere;
     }
-    
+
     .ai-body strong {
         font-weight: 700;
         color: #0F3554;
@@ -349,6 +306,52 @@ st.markdown(
         margin-bottom: 0.65rem;
     }
 
+    /* ---------- AI Explanation: structured card ---------- */
+    .ai-alert-box {
+        display: flex;
+        gap: 0.65rem;
+        background: #FEF3F2;
+        border: 1px solid #FECDCA;
+        border-radius: 10px;
+        padding: 0.85rem 1rem;
+        margin-bottom: 1rem;
+    }
+    .ai-alert-icon { font-size: 1.3rem; line-height: 1.4; flex-shrink: 0; }
+    .ai-alert-title { font-weight: 700; color: #B42318; font-size: 1.02rem; margin-bottom: 0.15rem; }
+    .ai-alert-desc { color: #7A271A; font-size: 0.95rem; line-height: 1.5; }
+
+    .ai-section { margin-top: 1.1rem; }
+    .ai-section-header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 700;
+        color: #0F172A;
+        font-size: 1rem;
+        margin-bottom: 0.45rem;
+    }
+    .ai-section-icon { font-size: 1.05rem; }
+
+    .ai-bullets { margin: 0; padding-left: 1.3rem; }
+    .ai-bullets li { color: #1E293B; font-size: 0.96rem; line-height: 1.55; margin-bottom: 0.3rem; }
+
+    .ai-meta-row { display: flex; gap: 2.5rem; flex-wrap: wrap; }
+    .ai-meta-label { font-size: 0.82rem; color: #64748B; font-weight: 600; }
+    .ai-meta-value { font-size: 0.98rem; color: #0F172A; font-weight: 600; }
+
+    .ai-footer-note {
+        display: flex;
+        gap: 0.6rem;
+        background: #F0F6FF;
+        border: 1px solid #D6E4FA;
+        border-radius: 10px;
+        padding: 0.75rem 0.9rem;
+        margin-top: 1.1rem;
+        font-size: 0.85rem;
+        color: #375273;
+        line-height: 1.5;
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -356,6 +359,17 @@ st.markdown(
 
 
 st.session_state.setdefault("ai_explanations", {})
+
+# One-time migration: the explanation format changed from a plain paragraph
+# string to a structured dict (headline / summary / why / actions). Drop any
+# old-format cached entries so they regenerate instead of breaking the new
+# renderer or being mistaken for the new shape.
+_stale_keys = [
+    k for k, v in st.session_state["ai_explanations"].items()
+    if isinstance(v, dict) and isinstance(v.get("explanation"), str)
+]
+for _k in _stale_keys:
+    del st.session_state["ai_explanations"][_k]
 
 # ============================================================
 # DATA LOADING (cached -- parquet is read once per session)
@@ -760,13 +774,18 @@ def get_baseline_context(timestamp):
         }
 
     return result
+
+
 def generate_ai_explanation(selected_event, event_rows):
     """
-    Generate one explanation for a complete anomaly event.
+    Generate one structured explanation for a complete anomaly event.
 
     One event = continuous occurrence of anomaly observations.
     Python collects the event evidence first. Groq is used only
-    to convert that evidence into a concise natural-language explanation.
+    to convert that evidence into a structured JSON explanation.
+
+    Returns (explanation_dict, evidence_dict).
+    Always either returns that 2-tuple, or raises. Never returns None.
     """
 
     client = get_groq_client()
@@ -1024,7 +1043,7 @@ def generate_ai_explanation(selected_event, event_rows):
         - Do not automatically call the anomaly a fault.
         - Feature contributions show which parameters were unusual; they do NOT prove root cause.
         - If the exact cause cannot be determined, say so plainly in "summary" or a bullet.
-        - "why_it_happened": 2-4 short bullets, each one plain-language fact from the evidence
+        - "why_it_happened": 2-4 short bullets, each a plain-language fact from the evidence
           (e.g. a parameter that moved outside its healthy range, or an unusual status/code).
         - "recommended_actions": 2-4 short, concrete, checkable next steps for an operator.
         - Keep every string free of markdown bold/asterisks — plain text only.
@@ -1035,6 +1054,7 @@ def generate_ai_explanation(selected_event, event_rows):
             default=str,
             ensure_ascii=False
         )
+
     # ------------------------------------------------------------
     # 9. GROQ REQUEST
     # ------------------------------------------------------------
@@ -1061,41 +1081,52 @@ def generate_ai_explanation(selected_event, event_rows):
             f"Groq request failed: {e}"
         ) from e
 
-        explanation = getattr(
-            response.choices[0].message,
-            "content",
-            None,
+    raw_content = getattr(
+        response.choices[0].message,
+        "content",
+        None,
+    )
+
+    if raw_content is None:
+        raise RuntimeError(
+            "Groq returned no text content."
         )
-    
-        if explanation is None:
-            raise RuntimeError("Groq returned no text content.")
-    
-        explanation = str(explanation).strip()
-        # Strip accidental ```json fences
-        explanation = re.sub(r"^```(?:json)?\s*|\s*```$", "", explanation.strip())
-    
-        if not explanation:
-            raise RuntimeError("Groq returned an empty explanation.")
-    
-        try:
-            parsed = json.loads(explanation)
-        except Exception as e:
-            raise RuntimeError(f"Groq did not return valid JSON: {e}") from e
-    
-        required = ["headline", "summary", "why_it_happened", "recommended_actions"]
-        if not all(k in parsed for k in required):
-            raise RuntimeError("Groq JSON is missing required fields.")
-    
-        # "When it occurred" is computed from data Python already trusts —
-        # never taken from the LLM.
-        parsed["when_time"] = fmt_time(event_start)
-        parsed["when_duration"] = fmt_num(event_duration, 0, " min") if event_duration is not None else "—"
-    
-        return parsed, evidence
+
+    raw_content = str(raw_content).strip()
+    # Strip accidental ```json fences some models add despite instructions.
+    raw_content = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_content).strip()
+
+    if not raw_content:
+        raise RuntimeError(
+            "Groq returned an empty explanation."
+        )
+
+    try:
+        parsed = json.loads(raw_content)
+    except Exception as e:
+        raise RuntimeError(f"Groq did not return valid JSON: {e}") from e
+
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Groq JSON response was not an object.")
+
+    required = ["headline", "summary", "why_it_happened", "recommended_actions"]
+    missing = [k for k in required if k not in parsed]
+    if missing:
+        raise RuntimeError(f"Groq JSON is missing required fields: {missing}")
+
+    # "When it occurred" is computed from data Python already trusts --
+    # never taken from the LLM.
+    parsed["when_time"] = fmt_time(event_start)
+    parsed["when_duration"] = (
+        fmt_num(event_duration, 0, " min") if event_duration is not None else "—"
+    )
+
+    return parsed, evidence
+
 
 def render_ai_explanation(data):
-    """Render the structured LLM explanation as icon-header sections,
-    matching the dashboard's alert/why/when/action card layout."""
+    """Render the structured LLM explanation as icon-header sections
+    (alert banner, Why it happened, When it occurred, Recommended action)."""
     if not data:
         return
 
@@ -1175,6 +1206,7 @@ def render_ai_explanation(data):
         ''',
         unsafe_allow_html=True,
     )
+
 # ============================================================
 # HEADER
 # ============================================================
@@ -1538,7 +1570,7 @@ if len(events_df) > 0:
         (anomaly_df["timestamp"] >= selected_event["start_time"]) &
         (anomaly_df["timestamp"] <= selected_event["end_time"])
     ].copy()
-    
+
 ai_header_col, ai_button_col = st.columns([7, 1.35])
 
 with ai_header_col:
@@ -1583,17 +1615,7 @@ if regenerate or cached is None:
                 "error": str(e),
             }
 
-        st.session_state.setdefault("ai_explanations", {})
-
-        # One-time migration: the explanation format changed from a plain string
-        # to a structured dict. Drop any old-format cached entries so they get
-        # regenerated instead of crashing render_ai_explanation.
-        _stale = [
-            k for k, v in st.session_state["ai_explanations"].items()
-            if isinstance(v, dict) and isinstance(v.get("explanation"), str)
-        ]
-        for k in _stale:
-            del st.session_state["ai_explanations"][k]
+        st.session_state["ai_explanations"][anomaly_key] = cached
 
 
 # ------------------------------------------------------------
@@ -1696,7 +1718,7 @@ if len(events_df) > 0:
             "Event Duration",
             fmt_num(selected_event.get("duration_min"), 1, " min")
         )
-    
+
     with inv_cols[2]:
         st.metric(
             "Anomaly Points",
