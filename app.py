@@ -1884,17 +1884,6 @@ if len(events_df) > 0:
                     f'''<div class="check-row"><span class="check-icon {cls}">{icon}</span><div><div class="check-name">{html.escape(check["name"])}</div><div class="check-detail">{html.escape(check["detail"])}</div></div></div>''',
                     unsafe_allow_html=True,
                 )
-
-            with st.expander(f"Show all validation checks ({len(merged_checks)})", expanded=False):
-                for check in merged_checks:
-                    status = check["status"]
-                    icon = "✓" if status == "PASS" else ("!" if status == "WARN" else "×")
-                    cls = "check-pass" if status == "PASS" else ("check-warn" if status == "WARN" else "check-fail")
-                    st.markdown(
-                        f'''<div class="check-row"><span class="check-icon {cls}">{icon}</span><div><div class="check-name">{html.escape(check["name"])}</div><div class="check-detail">{html.escape(check["detail"])}</div></div></div>''',
-                        unsafe_allow_html=True,
-                    )
-
             st.markdown('<div class="validation-note">Validation checks evidence consistency. A passed explanation is not proof of a physical fault or root cause.</div>', unsafe_allow_html=True)
         else:
             st.warning("AI did not return an explanation for this anomaly event.")
