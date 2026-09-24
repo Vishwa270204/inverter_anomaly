@@ -1664,7 +1664,7 @@ elif cached.get("explanation"):
         f"{ev_meta.get('event_id', event_key)} "
         f"({ev_meta.get('start_time', '?')} → {ev_meta.get('end_time', '?')})"
     )
-    st.caption(f"Validating data for **{event_label}**")
+
 
     # --------------------------------------------------------
     # DATA-FETCH VALIDATION -- is the evidence itself correct?
