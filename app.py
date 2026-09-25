@@ -1313,14 +1313,8 @@ def generate_ai_explanation(selected_event, event_rows):
     if missing:
         raise RuntimeError(f"Groq JSON is missing required fields: {missing}")
 
-    # "When it occurred" is computed from data Python already trusts --
-    # never taken from the LLM.
-    parsed["when_time"] = fmt_time(event_start)
-    parsed["when_duration"] = (
-        fmt_num(event_duration, 0, " min") if event_duration is not None else "—"
-    )
-
-    return parsed, evidence
+ 
+    return evidence
 
 
 def render_ai_explanation(data):
