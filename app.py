@@ -4,9 +4,7 @@ Inverter Anomaly Detection -- Streamlit Dashboard
 Production frontend only. All ML/training happens in inverter_anomaly.ipynb.
 
 Reads:
-    dashboard_data.parquet      -> evaluation-period observations + model output
-    trend_data.parquet          -> optional extended raw history
-    dashboard_baseline.parquet  -> healthy operating baseline (quantiles)
+    dashboard_data.parquet  -> evaluation-period observations + model output
 
 Does NOT retrain or re-run the notebook. Does NOT treat anomaly_score_ratio
 as a probability. Feature contributions are reported as "contributed most
@@ -19,25 +17,11 @@ import os
 import re
 import textwrap
 from datetime import datetime, timedelta
-
+from data_validation import validate_event_data, summarize as summarize_data
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from groq import Groq
-
-# data_validation.py is an optional integration: if it isn't present next to
-# app.py, the dashboard should degrade gracefully instead of crashing on import.
-try:
-    from data_validation import validate_event_data, summarize as summarize_data
-    HAS_DATA_VALIDATION = True
-except Exception:
-    HAS_DATA_VALIDATION = False
-
-    def validate_event_data(*args, **kwargs):
-        raise RuntimeError("data_validation module is not available.")
-
-    def summarize_data(*args, **kwargs):
-        raise RuntimeError("data_validation module is not available.")
 
 # ============================================================
 # PAGE CONFIG
@@ -49,7 +33,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# Professional, compact theme. Filters live near the top and content is
+# Professional, compact theme. Filters live in the sidebar and content is
 # split into tabs so the page fits the screen instead of scrolling forever.
 st.markdown(
     """
@@ -398,20 +382,14 @@ st.markdown(
 
 st.session_state.setdefault("ai_explanations", {})
 
-# One-time migration: the explanation format has changed shape over time
-# (plain paragraph string -> flat when_time/when_duration dict -> the
-# current when_occurred dict). Drop any cached entries that don't match the
-# current shape so they regenerate instead of breaking the renderer.
-_stale_keys = []
-for _k, _v in st.session_state["ai_explanations"].items():
-    if not isinstance(_v, dict):
-        _stale_keys.append(_k)
-        continue
-    _exp = _v.get("explanation")
-    if isinstance(_exp, str):
-        _stale_keys.append(_k)
-    elif isinstance(_exp, dict) and "when_occurred" not in _exp:
-        _stale_keys.append(_k)
+# One-time migration: the explanation format changed from a plain paragraph
+# string to a structured dict (headline / summary / why / actions). Drop any
+# old-format cached entries so they regenerate instead of breaking the new
+# renderer or being mistaken for the new shape.
+_stale_keys = [
+    k for k, v in st.session_state["ai_explanations"].items()
+    if isinstance(v, dict) and isinstance(v.get("explanation"), str)
+]
 for _k in _stale_keys:
     del st.session_state["ai_explanations"][_k]
 
@@ -431,7 +409,6 @@ def load_dashboard_data(path="dashboard_data.parquet"):
         df["anomaly_flag"] = False
     return df
 
-
 @st.cache_data
 def load_trend_data(path="trend_data.parquet"):
     df = pd.read_parquet(path)
@@ -439,26 +416,30 @@ def load_trend_data(path="trend_data.parquet"):
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     return df
 
-
 @st.cache_data
 def load_dashboard_baseline(path="dashboard_baseline.parquet"):
     baseline = pd.read_parquet(path)
 
     numeric_cols = [
         c for c in baseline.columns
-        if c.endswith("_median") or c.endswith("_q10") or c.endswith("_q90")
+        if c.endswith("_median")
+        or c.endswith("_q10")
+        or c.endswith("_q90")
     ]
+
     for col in numeric_cols:
-        baseline[col] = pd.to_numeric(baseline[col], errors="coerce")
+        baseline[col] = pd.to_numeric(
+            baseline[col],
+            errors="coerce"
+        )
 
     if "healthy_sample_count" in baseline.columns:
         baseline["healthy_sample_count"] = pd.to_numeric(
-            baseline["healthy_sample_count"], errors="coerce"
+            baseline["healthy_sample_count"],
+            errors="coerce"
         )
 
     return baseline
-
-
 def safe_load(loader, path, label):
     try:
         return loader(path)
@@ -472,15 +453,14 @@ def safe_load(loader, path, label):
         st.error(f"Failed to load **{label}** (`{path}`): {e}")
         st.stop()
 
-
 df = safe_load(load_dashboard_data, "dashboard_data.parquet", "Dashboard data")
+
 
 baseline_df = safe_load(
     load_dashboard_baseline,
     "dashboard_baseline.parquet",
     "Dashboard healthy baseline",
 )
-
 if df.empty:
     st.error("`dashboard_data.parquet` loaded but contains no rows.")
     st.stop()
@@ -507,13 +487,10 @@ def fmt_num(value, decimals=2, suffix="", dash="—"):
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return dash
     return f"{value:,.{decimals}f}{suffix}"
-
-
 def fmt_time(value, dash="—"):
     if value is None or pd.isna(value):
         return dash
     return pd.to_datetime(value).strftime("%Y-%m-%d %H:%M")
-
 
 def get_trend_window(source, end_time, hours_back=24):
     """Slice trend_data.parquet (or dashboard_data.parquet as fallback) to
@@ -544,19 +521,8 @@ def get_groq_client():
     return Groq(api_key=api_key)
 
 
-# Metrics used for the population-level baseline comparison. Kept as one
-# list so the comparison table, the aggregated reference, and the AI
-# evidence all agree on the same set of variables.
-COMPARISON_METRICS = [
-    ("dc_power_kw", "DC Power", " kW"),
-    ("ac_power_kw", "AC Power", " kW"),
-    ("inverter_temperature_c", "Temperature", " °C"),
-    ("efficiency_pct", "Efficiency", "%"),
-    ("power_factor", "Power Factor", ""),
-    ("dc_current_a", "DC Current", " A"),
-]
-
-
+# Controlled backend tools used by the AI analyst. The LLM can request
+# evidence, but it never gets arbitrary Python/database access.
 def clean_value(value):
     if value is None or pd.isna(value):
         return None
@@ -574,35 +540,31 @@ def row_to_dict(row):
     return {str(k): clean_value(v) for k, v in row.items()}
 
 
-def _filter_by_inverter(source, inverter_id):
-    """Restrict a frame to one inverter's rows, when both an inverter_id was
-    given and the frame actually has that column. Nearest-timestamp lookups
-    (operating context, baseline context, pre-event trend) must never be
-    allowed to match a different inverter's reading just because it happens
-    to be closer in time."""
-    if inverter_id is not None and "inverter_id" in source.columns:
-        return source[source["inverter_id"].astype(str) == str(inverter_id)]
-    return source
-
-
-def get_anomaly_details(timestamp, inverter_id=None):
+def get_anomaly_details(timestamp):
     target = pd.to_datetime(timestamp)
-    source = _filter_by_inverter(df, inverter_id)
+    source = df.copy()
     if source.empty:
         return {"error": "No inverter data available."}
-    idx = (source["timestamp"] - target).abs().idxmin()
+    idx = (
+        source["timestamp"] - target
+    ).abs().idxmin()
     return row_to_dict(source.loc[idx])
 
 
-def get_pre_anomaly_trend(timestamp, hours=24, inverter_id=None):
+def get_pre_anomaly_trend(timestamp, hours=24):
     target = pd.to_datetime(timestamp)
+
     start = target - timedelta(hours=float(hours))
 
-    source = _filter_by_inverter(trend_df, inverter_id)
-    source = source[(source["timestamp"] >= start) & (source["timestamp"] <= target)].copy()
+    source = trend_df[
+        (trend_df["timestamp"] >= start) &
+        (trend_df["timestamp"] <= target)
+    ].copy()
 
     if source.empty:
-        return {"error": "No trend observations found for the requested window."}
+        return {
+            "error": "No trend observations found for the requested window."
+        }
 
     numeric = [
         c
@@ -621,25 +583,37 @@ def get_pre_anomaly_trend(timestamp, hours=24, inverter_id=None):
     ]
 
     stats = {}
+
     for col in numeric:
-        series = pd.to_numeric(source[col], errors="coerce").dropna()
+
+        series = pd.to_numeric(
+            source[col],
+            errors="coerce"
+        ).dropna()
+
         if len(series) >= 2:
+
             stats[col] = {
                 "start": clean_value(series.iloc[0]),
                 "end": clean_value(series.iloc[-1]),
-                "net_change": clean_value(series.iloc[-1] - series.iloc[0]),
+                "net_change": clean_value(
+                    series.iloc[-1] - series.iloc[0]
+                ),
                 "min": clean_value(series.min()),
                 "max": clean_value(series.max()),
                 "median": clean_value(series.median()),
             }
 
     return {
-        "window_start": clean_value(source["timestamp"].min()),
-        "window_end": clean_value(source["timestamp"].max()),
+        "window_start": clean_value(
+            source["timestamp"].min()
+        ),
+        "window_end": clean_value(
+            source["timestamp"].max()
+        ),
         "observations": int(len(source)),
         "statistics": stats,
     }
-
 
 def get_feature_contributions(timestamp, inverter_id=None):
     target = pd.to_datetime(timestamp)
@@ -667,447 +641,686 @@ def get_feature_contributions(timestamp, inverter_id=None):
     }
 
 
-def get_operating_context(timestamp, inverter_id=None):
+def get_operating_context(timestamp):
     target = pd.to_datetime(timestamp)
-    source = _filter_by_inverter(df, inverter_id)
+
+    source = df.copy()
+
     if source.empty:
         return {"error": "No inverter data available."}
-    idx = (source["timestamp"] - target).abs().idxmin()
+
+    idx = (
+        source["timestamp"] - target
+    ).abs().idxmin()
+
     row = source.loc[idx]
 
     wanted = [
-        "timestamp", "hour", "minute", "month", "is_daylight", "inverter_status",
-        "dc_power_kw", "ac_power_kw", "dc_current_a", "ac_current_a", "power_factor",
-        "frequency_hz", "efficiency_pct", "inverter_temperature_c", "ambient_temperature_c",
-        "poa_w_m2", "ghi_w_m2", "quality_code", "communication_status", "fault_code", "alarm_code",
+        "timestamp",
+        "hour",
+        "minute",
+        "month",
+        "is_daylight",
+        "inverter_status",
+        "dc_power_kw",
+        "ac_power_kw",
+        "dc_current_a",
+        "ac_current_a",
+        "power_factor",
+        "frequency_hz",
+        "efficiency_pct",
+        "inverter_temperature_c",
+        "ambient_temperature_c",
+        "poa_w_m2",
+        "ghi_w_m2",
+        "quality_code",
+        "communication_status",
+        "fault_code",
+        "alarm_code",
     ]
-    return {k: clean_value(row.get(k)) for k in wanted if k in source.columns}
 
+    return {
+        k: clean_value(row.get(k))
+        for k in wanted
+        if k in source.columns
+    }
+def get_baseline_context(timestamp):
+    """
+    Retrieve the healthy physical baseline for operating conditions
+    similar to the selected observation.
 
-def get_baseline_context(timestamp, inverter_id=None):
-    """Retrieve healthy reference values for conditions similar to the
-    selected event. This is a comparison reference only. It does not
-    establish cause."""
+    Baseline is matched using:
+        - inverter_id
+        - DC power operating bin
+        - POA irradiance operating bin
+
+    The baseline is a comparison reference only.
+    It does not establish root cause.
+    """
+
     target = pd.to_datetime(timestamp)
-    source = _filter_by_inverter(df, inverter_id)
-    if source.empty:
-        return {"error": "No inverter data available."}
 
-    idx = (source["timestamp"] - target).abs().idxmin()
+    source = df.copy()
+
+    if source.empty:
+        return {
+            "error": "No inverter data available."
+        }
+
+    # ------------------------------------------------------------
+    # Find the observation closest to the requested timestamp
+    # ------------------------------------------------------------
+
+    idx = (
+        source["timestamp"] - target
+    ).abs().idxmin()
+
     row = source.loc[idx]
 
+    # ------------------------------------------------------------
+    # Required operating conditions
+    # ------------------------------------------------------------
+
+    inverter_id = row.get("inverter_id")
+    dc_power = pd.to_numeric(
+        row.get("dc_power_kw"),
+        errors="coerce"
+    )
+    poa = pd.to_numeric(
+        row.get("poa_w_m2"),
+        errors="coerce"
+    )
+
     conditions = {
-        "inverter_status": clean_value(row.get("inverter_status")),
-        "is_daylight": clean_value(row.get("is_daylight")),
-        "hour": clean_value(row.get("hour")),
-        "month": clean_value(row.get("month")),
+        "inverter_id": clean_value(inverter_id),
+        "dc_power_kw": clean_value(dc_power),
+        "poa_w_m2": clean_value(poa),
     }
 
-    baseline = baseline_df.copy()
-    match_cols = [c for c in ["inverter_status", "is_daylight", "hour", "month"]
-                  if c in baseline.columns and conditions.get(c) is not None]
-
-    matched = baseline.copy()
-    for col in match_cols:
-        matched = matched[matched[col].astype(str) == str(conditions[col])]
-
-    if matched.empty:
+    if pd.isna(dc_power) or pd.isna(poa) or inverter_id is None:
         return {
-            "error": "No healthy baseline group is available for the selected operating conditions.",
+            "error": (
+                "Cannot determine operating conditions required "
+                "to match the healthy baseline."
+            ),
             "conditions": conditions,
         }
 
+    # ------------------------------------------------------------
+    # Use EXACTLY the same bins as the notebook baseline creation
+    # ------------------------------------------------------------
+
+    dc_power_bin = pd.cut(
+        pd.Series([float(dc_power)]),
+        bins=[
+            -np.inf,
+            5,
+            10,
+            20,
+            30,
+            40,
+            50,
+            60,
+            np.inf,
+        ],
+    ).iloc[0]
+
+    poa_bin = pd.cut(
+        pd.Series([float(poa)]),
+        bins=[
+            -np.inf,
+            100,
+            200,
+            400,
+            600,
+            800,
+            1000,
+            np.inf,
+        ],
+    ).iloc[0]
+
+    conditions["dc_power_bin"] = str(dc_power_bin)
+    conditions["poa_bin"] = str(poa_bin)
+
+    # ------------------------------------------------------------
+    # Match the healthy baseline
+    # ------------------------------------------------------------
+
+    baseline = baseline_df.copy()
+
+    required_cols = [
+        "inverter_id",
+        "dc_power_bin",
+        "poa_bin",
+        "healthy_sample_count",
+    ]
+
+    missing_cols = [
+        col
+        for col in required_cols
+        if col not in baseline.columns
+    ]
+
+    if missing_cols:
+        return {
+            "error": (
+                "dashboard_baseline.parquet is missing required "
+                f"columns: {missing_cols}"
+            ),
+            "conditions": conditions,
+        }
+
+    matched = baseline[
+        baseline["inverter_id"].astype(str)
+        == str(inverter_id)
+    ].copy()
+
+    matched = matched[
+        matched["dc_power_bin"].astype(str)
+        == str(dc_power_bin)
+    ]
+
+    matched = matched[
+        matched["poa_bin"].astype(str)
+        == str(poa_bin)
+    ]
+
+    # ------------------------------------------------------------
+    # No exact baseline group
+    # ------------------------------------------------------------
+
+    if matched.empty:
+        return {
+            "error": (
+                "No healthy baseline group is available for "
+                "the selected operating conditions."
+            ),
+            "conditions": conditions,
+        }
+
+    # There should normally be exactly one row.
+    reference_row = matched.iloc[0]
+
+    # ------------------------------------------------------------
+    # Build result
+    # ------------------------------------------------------------
+
     result = {
         "conditions": conditions,
-        "healthy_sample_count": int(matched["healthy_sample_count"].sum()) if "healthy_sample_count" in matched.columns else None,
+
+        "healthy_sample_count": int(
+            pd.to_numeric(
+                reference_row["healthy_sample_count"],
+                errors="coerce"
+            )
+        ),
+
         "reference": {},
     }
 
-    metric_names = sorted({col[:-7] for col in matched.columns if col.endswith("_median")})
+    # ------------------------------------------------------------
+    # Extract median / q10 / q90 for every baseline metric
+    # ------------------------------------------------------------
+
+    metric_names = sorted({
+        col[:-7]
+        for col in baseline.columns
+        if col.endswith("_median")
+    })
+
     for metric in metric_names:
-        median_col, q10_col, q90_col = f"{metric}_median", f"{metric}_q10", f"{metric}_q90"
-        if median_col not in matched.columns:
+
+        median_col = f"{metric}_median"
+        q10_col = f"{metric}_q10"
+        q90_col = f"{metric}_q90"
+
+        if (
+            median_col not in baseline.columns
+            or q10_col not in baseline.columns
+            or q90_col not in baseline.columns
+        ):
             continue
-        cols_present = [c for c in [median_col, q10_col, q90_col] if c in matched.columns]
-        values = matched[cols_present].dropna(how="all")
-        if values.empty:
-            continue
+
         result["reference"][metric] = {
-            "median": clean_value(values[median_col].iloc[0]) if median_col in values.columns else None,
-            "typical_low_q10": clean_value(values[q10_col].iloc[0]) if q10_col in values.columns else None,
-            "typical_high_q90": clean_value(values[q90_col].iloc[0]) if q90_col in values.columns else None,
+            "median": clean_value(
+                reference_row.get(median_col)
+            ),
+            "typical_low_q10": clean_value(
+                reference_row.get(q10_col)
+            ),
+            "typical_high_q90": clean_value(
+                reference_row.get(q90_col)
+            ),
         }
+
+    # ------------------------------------------------------------
+    # Add direct comparison for important physical variables
+    # ------------------------------------------------------------
+
+    comparison_metrics = [
+        "dc_power_kw",
+        "ac_power_kw",
+        "dc_current_a",
+        "ac_current_a",
+        "inverter_temperature_c",
+        "ambient_temperature_c",
+        "inverter_ambient_temp_delta",
+        "efficiency_pct",
+        "power_factor",
+        "frequency_hz",
+        "poa_w_m2",
+        "ghi_w_m2",
+    ]
+
+    comparison = {}
+
+    for metric in comparison_metrics:
+
+        if metric not in source.columns:
+            continue
+
+        actual = pd.to_numeric(
+            row.get(metric),
+            errors="coerce"
+        )
+
+        reference = result["reference"].get(metric)
+
+        if reference is None or pd.isna(actual):
+            continue
+
+        median = reference.get("median")
+        q90 = reference.get("typical_high_q90")
+        q10 = reference.get("typical_low_q10")
+
+        comparison[metric] = {
+            "actual": clean_value(actual),
+            "healthy_median": median,
+            "healthy_q10": q10,
+            "healthy_q90": q90,
+        }
+
+        if median is not None and pd.notna(median):
+            comparison[metric]["deviation_from_median"] = clean_value(
+                actual - float(median)
+            )
+
+        if q90 is not None and pd.notna(q90):
+            comparison[metric]["above_q90"] = bool(
+                actual > float(q90)
+            )
+
+        if q10 is not None and pd.notna(q10):
+            comparison[metric]["below_q10"] = bool(
+                actual < float(q10)
+            )
+
+    result["comparison"] = comparison
 
     return result
 
+def generate_ai_explanation(selected_event, event_rows):
+    """
+    Generate one structured explanation for a complete anomaly event.
 
-def get_healthy_baseline_summary(baseline_df):
-    """Aggregate the healthy-baseline quantile table into simple headline
-    ranges. Returns a list of (label, value_str) pairs. Never raises --
-    returns an empty list if the baseline has no usable data. This replaces
-    the previous version's scope bug (an undefined `unit` could leak across
-    features when a metric had no valid quantiles).
+    One event = continuous occurrence of anomaly observations.
+    Python collects the event evidence first. Groq is used only
+    to convert that evidence into a structured JSON explanation.
 
-    Only the standard `<metric>_q10` / `<metric>_q90` columns are required;
-    any optional baseline columns the notebook may or may not export (for
-    example bucketed columns like `dc_power_bin_lower` / `dc_power_bin_upper`)
-    are simply ignored here -- their absence never raises, since every
-    column is checked with `in baseline_df.columns` before use."""
-    if baseline_df is None or baseline_df.empty:
-        return []
-
-    rows = []
-    for feature, label, unit in COMPARISON_METRICS:
-        q10_col, q90_col = f"{feature}_q10", f"{feature}_q90"
-        if q10_col not in baseline_df.columns or q90_col not in baseline_df.columns:
-            continue
-        low = pd.to_numeric(baseline_df[q10_col], errors="coerce").median()
-        high = pd.to_numeric(baseline_df[q90_col], errors="coerce").median()
-        if pd.notna(low) and pd.notna(high):
-            rows.append((label, f"{low:.1f}–{high:.1f}{unit}"))
-    return rows
-
-
-def aggregate_baseline_reference(baseline_df, metrics):
-    """Median-of-medians reference values for each metric across all
-    healthy baseline groups. A population-level reference (not matched to
-    any single timestamp's operating conditions)."""
-    reference = {}
-    if baseline_df is None or baseline_df.empty:
-        return reference
-    for metric in metrics:
-        median_col, q10_col, q90_col = f"{metric}_median", f"{metric}_q10", f"{metric}_q90"
-        if median_col not in baseline_df.columns:
-            continue
-        med = pd.to_numeric(baseline_df[median_col], errors="coerce").dropna()
-        if med.empty:
-            continue
-        q10 = pd.to_numeric(baseline_df[q10_col], errors="coerce").dropna() if q10_col in baseline_df.columns else pd.Series(dtype=float)
-        q90 = pd.to_numeric(baseline_df[q90_col], errors="coerce").dropna() if q90_col in baseline_df.columns else pd.Series(dtype=float)
-        reference[metric] = {
-            "median": clean_value(med.median()),
-            "typical_low_q10": clean_value(q10.median()) if not q10.empty else None,
-            "typical_high_q90": clean_value(q90.median()) if not q90.empty else None,
-        }
-    return reference
-
-
-def compare_population_to_baseline(anomaly_df, baseline_reference):
-    """Compare mean anomaly-population values against the aggregated
-    healthy baseline reference. Supporting evidence only -- does not
-    establish cause."""
-    rows = []
-    if anomaly_df is None or anomaly_df.empty:
-        return rows
-    for metric, label, unit in COMPARISON_METRICS:
-        if metric not in anomaly_df.columns or metric not in baseline_reference:
-            continue
-        values = pd.to_numeric(anomaly_df[metric], errors="coerce").dropna()
-        if values.empty:
-            continue
-        observed = values.mean()
-        ref = baseline_reference[metric]
-        low, high = ref.get("typical_low_q10"), ref.get("typical_high_q90")
-        if low is not None and high is not None:
-            if observed < low:
-                status = "Below typical range"
-            elif observed > high:
-                status = "Above typical range"
-            else:
-                status = "Within typical range"
-            range_str = f"{low:.1f}–{high:.1f}{unit}"
-        else:
-            status = "No healthy reference available"
-            range_str = "—"
-        rows.append({
-            "label": label,
-            "observed": f"{observed:.1f}{unit}",
-            "typical_range": range_str,
-            "status": status,
-        })
-    return rows
-
-
-def build_key_observations(anomaly_df, events_df, comparison_rows):
-    """Operator-facing summary answering 'what should I investigate first?'.
-    Built only from values already computed elsewhere -- no new claims."""
-    obs = {
-        "anomaly_count": int(len(anomaly_df)),
-        "event_count": int(len(events_df)),
-        "typical_duration": None,
-        "max_severity": None,
-        "top_features": [],
-        "off_baseline_metrics": [],
-    }
-    if not events_df.empty and "duration_min" in events_df.columns:
-        durations = pd.to_numeric(events_df["duration_min"], errors="coerce").dropna()
-        if not durations.empty:
-            obs["typical_duration"] = float(durations.median())
-
-    if "anomaly_score_ratio" in anomaly_df.columns:
-        scores = pd.to_numeric(anomaly_df["anomaly_score_ratio"], errors="coerce").dropna()
-        if not scores.empty:
-            obs["max_severity"] = float(scores.max())
-
-    contribution_cols = get_contribution_cols(anomaly_df)
-    if contribution_cols:
-        means = (
-            anomaly_df[contribution_cols].apply(pd.to_numeric, errors="coerce")
-            .mean().dropna().sort_values(ascending=False)
-        )
-        obs["top_features"] = [c.replace("_contribution_pct", "") for c in means.head(3).index]
-
-    obs["off_baseline_metrics"] = [
-        r["label"] for r in comparison_rows if r["status"] in ("Above typical range", "Below typical range")
-    ]
-    return obs
-
-
-def render_key_observations(obs):
-    lines = [f"**{obs['anomaly_count']:,}** anomalous observations across **{obs['event_count']}** persistent event(s)."]
-    if obs["typical_duration"] is not None:
-        lines.append(f"Typical persistent-event duration: **~{obs['typical_duration']:.0f} min**.")
-    if obs["max_severity"] is not None:
-        lines.append(f"Maximum observed anomaly score (not a probability): **{obs['max_severity']:.2f}**.")
-    if obs["top_features"]:
-        lines.append("Variables contributing most to unusual reconstruction error: **" + ", ".join(obs["top_features"]) + "**.")
-    if obs["off_baseline_metrics"]:
-        lines.append(
-            "Outside the typical healthy range during anomalies: **" + ", ".join(obs["off_baseline_metrics"])
-            + "** (supporting evidence only, not proof of cause)."
-        )
-    if len(lines) == 1 and obs["anomaly_count"] == 0:
-        st.caption("No anomalies in the selected period.")
-        return
-    for line in lines:
-        st.markdown(f"- {line}")
-
-
-def run_optional_data_validation(frame):
-    """Best-effort integration with data_validation.py. Exact function
-    signatures can vary by deployment, so every call is guarded -- a
-    failure here must never crash the dashboard."""
-    checks, summary = None, None
-    if not HAS_DATA_VALIDATION:
-        return checks, summary
-    try:
-        checks = validate_event_data(frame)
-    except Exception:
-        checks = None
-    try:
-        summary = summarize_data(frame)
-    except Exception:
-        summary = None
-    return checks, summary
-
-
-def render_optional_data_validation(frame, label="selected data"):
-    if not HAS_DATA_VALIDATION:
-        st.caption("Data validation module is not available in this deployment.")
-        return
-    if frame is None or frame.empty:
-        st.caption(f"No {label} available to validate.")
-        return
-
-    checks, summary = run_optional_data_validation(frame)
-    if checks is None and summary is None:
-        st.caption("Data validation did not return a result for this selection.")
-        return
-
-    if summary is not None:
-        with st.expander("Data summary", expanded=False):
-            if isinstance(summary, dict):
-                st.json(summary)
-            else:
-                st.write(summary)
-
-    if checks is not None:
-        with st.expander("Data validation checks", expanded=False):
-            if isinstance(checks, (list, tuple)):
-                for c in checks:
-                    if isinstance(c, dict) and "name" in c and "status" in c:
-                        status = str(c["status"]).upper()
-                        icon_class = {"PASS": "check-pass", "OK": "check-pass", "WARN": "check-warn", "FAIL": "check-fail"}.get(status, "check-warn")
-                        icon = {"PASS": "✓", "OK": "✓", "WARN": "!", "FAIL": "✕"}.get(status, "!")
-                        st.markdown(
-                            f'<div class="check-row"><div class="check-icon {icon_class}">{icon}</div>'
-                            f'<div><div class="check-name">{html.escape(str(c["name"]))}</div>'
-                            f'<div class="check-detail">{html.escape(str(c.get("detail","")))}</div></div></div>',
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.write(c)
-            else:
-                st.write(checks)
-
-
-def build_population_evidence(anomaly_df, events_df, baseline_df, start_date, end_date, selected_inverter):
-    """Single evidence structure shared by the AI generator AND the
-    evidence-consistency validator, so the two never disagree on field
-    names (this was the previous inconsistency between
-    'anomaly_observations'/'healthy_baseline_summary' in the generator and
-    'event_observations'/'healthy_baseline' in the validator)."""
-
-    evidence = {
-        "analysis_scope": {
-            "start_date": str(start_date),
-            "end_date": str(end_date),
-            "inverter": "All" if selected_inverter == "All" else str(selected_inverter),
-        },
-        "anomaly_summary": {
-            "anomaly_observation_count": int(len(anomaly_df)),
-            "persistent_event_count": int(len(events_df)),
-        },
-    }
-
-    event_patterns = {}
-    if not events_df.empty:
-        for col in ["duration_min", "anomaly_count", "max_severity", "mean_severity"]:
-            if col in events_df.columns:
-                values = pd.to_numeric(events_df[col], errors="coerce").dropna()
-                if not values.empty:
-                    event_patterns[col] = {
-                        "min": clean_value(values.min()),
-                        "mean": clean_value(values.mean()),
-                        "median": clean_value(values.median()),
-                        "max": clean_value(values.max()),
-                    }
-        if "start_time" in events_df.columns:
-            event_patterns["earliest_event_start"] = clean_value(events_df["start_time"].min())
-        if "end_time" in events_df.columns:
-            event_patterns["latest_event_end"] = clean_value(events_df["end_time"].max())
-    evidence["event_patterns"] = event_patterns
-
-    operating_patterns = {}
-    for col in ["inverter_status", "is_daylight", "quality_code", "communication_status", "fault_code", "alarm_code"]:
-        if col not in anomaly_df.columns:
-            continue
-        values = anomaly_df[col].dropna().astype(str)
-        if not values.empty:
-            counts = values.value_counts().head(10)
-            operating_patterns[col] = {str(k): int(v) for k, v in counts.items()}
-    evidence["operating_patterns"] = operating_patterns
-
-    contribution_cols = get_contribution_cols(anomaly_df)
-    if contribution_cols:
-        means = (
-            anomaly_df[contribution_cols].apply(pd.to_numeric, errors="coerce")
-            .mean().dropna().sort_values(ascending=False)
-        )
-        evidence["feature_contributions"] = [
-            {"feature": col.replace("_contribution_pct", ""), "mean_contribution_pct": clean_value(value)}
-            for col, value in means.head(10).items()
-        ]
-    else:
-        evidence["feature_contributions"] = []
-
-    numeric_cols = [
-        "dc_power_kw", "dc_current_a", "ac_power_kw", "ac_current_a",
-        "power_factor", "frequency_hz", "efficiency_pct",
-        "inverter_temperature_c", "ambient_temperature_c",
-        "poa_w_m2", "ghi_w_m2", "packet_loss_pct", "communication_latency_ms",
-    ]
-    stats = {}
-    for col in numeric_cols:
-        if col not in anomaly_df.columns:
-            continue
-        values = pd.to_numeric(anomaly_df[col], errors="coerce").dropna()
-        if not values.empty:
-            stats[col] = {
-                "min": clean_value(values.min()),
-                "mean": clean_value(values.mean()),
-                "median": clean_value(values.median()),
-                "max": clean_value(values.max()),
-            }
-    evidence["anomaly_observations"] = {"observation_count": int(len(anomaly_df)), "statistics": stats}
-
-    evidence["healthy_baseline"] = {"reference": aggregate_baseline_reference(baseline_df, numeric_cols)}
-
-    return evidence
-
-
-def generate_overall_ai_explanation(evidence):
-    """Generate one evidence-based explanation for the whole anomaly
-    population in scope (not a single selected event)."""
+    Returns (explanation_dict, evidence_dict).
+    Always either returns that 2-tuple, or raises. Never returns None.
+    """
 
     client = get_groq_client()
+
     if client is None:
         raise RuntimeError(
             "GROQ_API_KEY is not configured. Set GROQ_API_KEY in the environment "
             "or Streamlit secrets."
         )
 
-    prompt = """
-You are an explanation assistant inside a solar inverter anomaly detection dashboard.
+    # ------------------------------------------------------------
+    # 1. EVENT INFORMATION
+    # ------------------------------------------------------------
 
-Analyze ALL detected anomalies in the supplied period as one population. Do not
-describe a single selected event -- describe recurring patterns across the group.
+    event_start = clean_value(selected_event.get("start_time"))
+    event_end = clean_value(selected_event.get("end_time"))
+    event_duration = clean_value(selected_event.get("duration_min"))
+    anomaly_count = clean_value(selected_event.get("anomaly_count"))
 
-Return ONLY valid JSON with this exact structure:
-{
-  "headline": "One short sentence describing the overall anomaly pattern.",
-  "summary": "2-3 plain-language sentences explaining what is generally happening.",
-  "why_it_happened": ["pattern-based reason 1", "pattern-based reason 2", "pattern-based reason 3"],
-  "when_occurred": {
-    "time_pattern": "The overall date/time range in scope, and whether anomalies cluster during daylight/night or particular hours, only if supported by evidence.",
-    "duration_pattern": "The persistent-event count and typical/shortest/longest duration, using the supplied event statistics.",
-    "operating_pattern": "Recurring operating-condition patterns (status, communication, daylight) only if supported by evidence."
-  },
-  "recommended_actions": ["practical operator check 1", "practical operator check 2", "practical operator check 3"]
-}
+    # ------------------------------------------------------------
+    # 2. COLLECT EVENT EVIDENCE
+    # ------------------------------------------------------------
 
-Rules:
-- Use only the supplied evidence; never invent measurements, dates, or counts.
-- Feature contributions show variables associated with unusual reconstruction error;
-  they do not prove physical root cause. Never say "root cause" or "caused by".
-- Never call anomaly_score_ratio or reconstruction_error a probability or confidence value.
-- Healthy baseline values are supporting comparison only, not proof of a fault.
-- If the physical cause cannot be determined from the evidence, say so explicitly.
-- Prefer patterns supported by multiple observations or events over isolated ones.
-- Avoid ML jargon (autoencoder, threshold, reconstruction error, probability) in the
-  operator-facing text -- write for a plant operator.
-- Keep every field concise and grounded only in the SUPPLIED EVIDENCE below.
+    evidence = {
+        "event": {
+            "event_id": clean_value(selected_event.get("event_id")),
+            "start_time": event_start,
+            "end_time": event_end,
+            "duration_min": event_duration,
+            "anomaly_count": anomaly_count,
+            "max_severity": clean_value(
+                selected_event.get("max_severity")
+            ),
+            "mean_severity": clean_value(
+                selected_event.get("mean_severity")
+            ),
+            "dominant_status": clean_value(
+                selected_event.get("dominant_status")
+            ),
+            "anomaly_type": clean_value(
+                selected_event.get("anomaly_type")
+            ),
+        }
+    }
 
-SUPPLIED EVIDENCE:
-""" + json.dumps(evidence, default=str, ensure_ascii=False)
+    # ------------------------------------------------------------
+    # 3. EVENT OBSERVATIONS
+    # ------------------------------------------------------------
 
-    response = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Return ONLY a valid JSON object. Do not use markdown fences. "
-                    "Do not add commentary before or after the JSON."
+    if event_rows is not None and not event_rows.empty:
+
+        numeric_cols = [
+            "dc_power_kw",
+            "dc_current_a",
+            "ac_power_kw",
+            "ac_current_a",
+            "power_factor",
+            "frequency_hz",
+            "efficiency_pct",
+            "inverter_temperature_c",
+            "ambient_temperature_c",
+            "poa_w_m2",
+            "ghi_w_m2",
+            "packet_loss_pct",
+            "communication_latency_ms",
+        ]
+
+        event_statistics = {}
+
+        for col in numeric_cols:
+
+            if col not in event_rows.columns:
+                continue
+
+            series = pd.to_numeric(
+                event_rows[col],
+                errors="coerce"
+            ).dropna()
+
+            if len(series) == 0:
+                continue
+
+            event_statistics[col] = {
+                "start": clean_value(series.iloc[0]),
+                "end": clean_value(series.iloc[-1]),
+                "min": clean_value(series.min()),
+                "max": clean_value(series.max()),
+                "mean": clean_value(series.mean()),
+                "median": clean_value(series.median()),
+            }
+
+        evidence["event_observations"] = {
+            "observation_count": int(len(event_rows)),
+            "statistics": event_statistics,
+        }
+
+        # --------------------------------------------------------
+        # 4. OPERATING CONDITIONS DURING EVENT
+        # --------------------------------------------------------
+
+        context_columns = [
+            "inverter_status",
+            "is_daylight",
+            "hour",
+            "month",
+            "quality_code",
+            "communication_status",
+            "fault_code",
+            "alarm_code",
+        ]
+
+        operating_context = {}
+
+        for col in context_columns:
+
+            if col not in event_rows.columns:
+                continue
+
+            values = (
+                event_rows[col]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            if values:
+                operating_context[col] = values
+
+        evidence["operating_context"] = operating_context
+
+        # --------------------------------------------------------
+        # 5. FEATURE CONTRIBUTIONS
+        # --------------------------------------------------------
+
+        contribution_cols = get_contribution_cols(event_rows)
+
+        if contribution_cols:
+
+            contribution_values = (
+                event_rows[contribution_cols]
+                .apply(pd.to_numeric, errors="coerce")
+                .mean()
+                .dropna()
+                .sort_values(ascending=False)
+            )
+
+            evidence["feature_contributions"] = [
+                {
+                    "feature": col.replace(
+                        "_contribution_pct",
+                        ""
+                    ),
+                    "mean_contribution_pct": clean_value(value),
+                }
+                for col, value in contribution_values.head(5).items()
+            ]
+
+        # --------------------------------------------------------
+        # 6. PRE-EVENT TREND
+        # --------------------------------------------------------
+
+        trend, _ = get_trend_window(
+            trend_df,
+            pd.to_datetime(event_start),
+            hours_back=24,
+        )
+
+        if not trend.empty:
+
+            trend_statistics = {}
+
+            trend_columns = [
+                "dc_power_kw",
+                "ac_power_kw",
+                "dc_current_a",
+                "ac_current_a",
+                "inverter_temperature_c",
+                "efficiency_pct",
+                "power_factor",
+            ]
+
+            for col in trend_columns:
+
+                if col not in trend.columns:
+                    continue
+
+                series = pd.to_numeric(
+                    trend[col],
+                    errors="coerce"
+                ).dropna()
+
+                if len(series) >= 2:
+
+                    trend_statistics[col] = {
+                        "start": clean_value(series.iloc[0]),
+                        "end": clean_value(series.iloc[-1]),
+                        "min": clean_value(series.min()),
+                        "max": clean_value(series.max()),
+                        "median": clean_value(series.median()),
+                    }
+
+            evidence["pre_event_trend"] = {
+                "window_start": clean_value(
+                    trend["timestamp"].min()
                 ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.0,
-        max_tokens=1600,
-        response_format={"type": "json_object"},
-    )
+                "window_end": clean_value(
+                    trend["timestamp"].max()
+                ),
+                "observations": int(len(trend)),
+                "statistics": trend_statistics,
+            }
 
-    raw = (response.choices[0].message.content or "").strip()
-
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
-        raw = re.sub(r"\s*```$", "", raw)
-
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start >= 0 and end > start:
-        raw = raw[start:end + 1]
+    # ------------------------------------------------------------
+    # 7. HEALTHY BASELINE
+    # ------------------------------------------------------------
 
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"The AI returned malformed JSON. Parser error: {exc}.") from exc
+
+        if event_rows is not None and not event_rows.empty:
+
+            reference_row = event_rows.iloc[0]
+
+            baseline = get_baseline_context(
+                reference_row["timestamp"]
+            )
+
+            evidence["healthy_baseline"] = baseline
+
+    except Exception as e:
+
+        evidence["healthy_baseline_error"] = str(e)
+
+    # ------------------------------------------------------------
+    # 8. AI PROMPT
+    # ------------------------------------------------------------
+
+    prompt = """
+        You are an explanation assistant inside a solar inverter anomaly detection dashboard.
+        Respond with ONLY a single JSON object — no markdown fences, no extra text.
+
+        JSON shape (all fields required, all values are plain strings unless noted):
+        {
+          "headline": "One short sentence naming what happened, simple language, no ML terms.",
+          "summary": "1-2 plain sentences expanding on the headline (what changed, roughly how much).",
+          "why_it_happened": ["bullet 1", "bullet 2", "bullet 3"],
+          "recommended_actions": ["bullet 1", "bullet 2", "bullet 3"]
+        }
+
+        IMPORTANT RULES:
+        - Use simple words. Avoid technical/ML terms (no autoencoder, reconstruction error,
+          threshold, anomaly score, probability, confidence, etc).
+        - Explain as if talking to a plant operator, not a data scientist.
+        - Use ONLY the supplied evidence. Never invent measurements, causes, or events.
+        - Do not automatically call the anomaly a fault.
+        - Feature contributions show which parameters were unusual; they do NOT prove root cause.
+        - If the exact cause cannot be determined, say so plainly in "summary" or a bullet.
+        - "why_it_happened": 2-4 short bullets, each a plain-language fact from the evidence
+          (e.g. a parameter that moved outside its healthy range, or an unusual status/code).
+        - "recommended_actions": 2-4 short, concrete, checkable next steps for an operator.
+        - Keep every string free of markdown bold/asterisks — plain text only.
+
+        EVENT EVIDENCE:
+    """ + json.dumps(
+            evidence,
+            default=str,
+            ensure_ascii=False
+        )
+
+    # ------------------------------------------------------------
+    # 9. GROQ REQUEST
+    # ------------------------------------------------------------
+    # Two layers of defense against malformed JSON from the model:
+    #   1. response_format={"type": "json_object"} asks Groq to constrain
+    #      generation to valid JSON in the first place.
+    #   2. If parsing still fails (rare -- e.g. a stray unescaped quote
+    #      inside a bullet string), send the broken output back once with
+    #      the exact parser error and ask the model to fix it, instead of
+    #      failing the whole explanation.
+
+    def _call_groq(messages):
+        try:
+            response = client.chat.completions.create(
+                model="openai/gpt-oss-20b",
+                messages=messages,
+                reasoning_effort="low",
+                include_reasoning=False,
+                temperature=0.2,
+                max_completion_tokens=768,
+                response_format={"type": "json_object"},
+            )
+        except Exception as e:
+            raise RuntimeError(f"Groq request failed: {e}") from e
+
+        content = getattr(response.choices[0].message, "content", None)
+        if content is None:
+            raise RuntimeError("Groq returned no text content.")
+
+        content = str(content).strip()
+        # Strip accidental ```json fences some models add despite instructions.
+        content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content).strip()
+
+        if not content:
+            raise RuntimeError("Groq returned an empty explanation.")
+
+        return content
+
+    base_messages = [{"role": "user", "content": prompt}]
+    raw_content = _call_groq(base_messages)
+
+    try:
+        parsed = json.loads(raw_content)
+    except Exception as first_error:
+        # Repair attempt: show the model its own broken output and the
+        # exact parser error, and ask for a corrected JSON object only.
+        repair_messages = base_messages + [
+            {"role": "assistant", "content": raw_content},
+            {
+                "role": "user",
+                "content": (
+                    "That was not valid JSON. The parser error was: "
+                    f"{first_error}. Return ONLY a corrected, valid JSON "
+                    "object with the same fields (headline, summary, "
+                    "why_it_happened, recommended_actions). No markdown "
+                    "fences, no explanation, just the JSON object."
+                ),
+            },
+        ]
+        try:
+            raw_content = _call_groq(repair_messages)
+            parsed = json.loads(raw_content)
+        except Exception as second_error:
+            raise RuntimeError(
+                f"Groq did not return valid JSON after a retry: {second_error}"
+            ) from second_error
 
     if not isinstance(parsed, dict):
-        raise RuntimeError("The AI returned valid JSON, but it was not a JSON object.")
+        raise RuntimeError("Groq JSON response was not an object.")
 
-    return parsed
+    required = ["headline", "summary", "why_it_happened", "recommended_actions"]
+    missing = [k for k in required if k not in parsed]
+    if missing:
+        raise RuntimeError(f"Groq JSON is missing required fields: {missing}")
+
+    # "When it occurred" is computed from data Python already trusts --
+    # never taken from the LLM.
+    parsed["when_time"] = fmt_time(event_start)
+    parsed["when_duration"] = (
+        fmt_num(event_duration, 0, " min") if event_duration is not None else "—"
+    )
+
+    return parsed, evidence
 
 
 def render_ai_explanation(data):
@@ -1116,13 +1329,16 @@ def render_ai_explanation(data):
     if not data:
         return
 
-    # Backward compatibility: much older cached entries stored a plain
-    # paragraph string instead of a dict.
+    # Backward compatibility: older cached entries (before the structured
+    # JSON format) stored a plain paragraph string instead of a dict.
     if isinstance(data, str):
         text = re.sub(r"\s+", " ", data).strip()
         safe = html.escape(text)
         safe = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
-        st.markdown(f'<div class="ai-card"><div class="ai-body">{safe}</div></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="ai-card"><div class="ai-body">{safe}</div></div>',
+            unsafe_allow_html=True,
+        )
         return
 
     def esc(s):
@@ -1132,24 +1348,11 @@ def render_ai_explanation(data):
     summary = esc(data.get("summary", ""))
     why_bullets = [esc(b) for b in data.get("why_it_happened", []) if b]
     action_bullets = [esc(b) for b in data.get("recommended_actions", []) if b]
-
-    when = data.get("when_occurred")
-    if isinstance(when, dict):
-        time_pattern = esc(when.get("time_pattern", "—"))
-        duration_pattern = esc(when.get("duration_pattern", "—"))
-        operating_pattern = esc(when.get("operating_pattern", ""))
-    else:
-        # Backward compatibility with the older flat when_time/when_duration shape.
-        time_pattern = esc(data.get("when_time", "—"))
-        duration_pattern = esc(data.get("when_duration", "—"))
-        operating_pattern = ""
+    when_time = esc(data.get("when_time", "—"))
+    when_duration = esc(data.get("when_duration", "—"))
 
     why_html = "".join(f"<li>{b}</li>" for b in why_bullets)
     action_html = "".join(f"<li>{b}</li>" for b in action_bullets)
-    operating_row_html = (
-        f'<div class="ai-row"><div class="ai-label">Operating pattern</div><div class="ai-body">{operating_pattern}</div></div>'
-        if operating_pattern else ""
-    )
 
     html_block = textwrap.dedent(f'''
         <div class="ai-card">
@@ -1172,15 +1375,16 @@ def render_ai_explanation(data):
                 <div class="ai-section-header">
                     <span class="ai-section-icon">🕐</span> When it occurred?
                 </div>
-                <div class="ai-row">
-                    <div class="ai-label">Time pattern</div>
-                    <div class="ai-body">{time_pattern}</div>
+                <div class="ai-meta-row">
+                    <div>
+                        <div class="ai-meta-label">Time</div>
+                        <div class="ai-meta-value">{when_time}</div>
+                    </div>
+                    <div>
+                        <div class="ai-meta-label">Duration</div>
+                        <div class="ai-meta-value">~{when_duration}</div>
+                    </div>
                 </div>
-                <div class="ai-row">
-                    <div class="ai-label">Duration pattern</div>
-                    <div class="ai-body">{duration_pattern}</div>
-                </div>
-                {operating_row_html}
             </div>
 
             <div class="ai-section">
@@ -1192,9 +1396,9 @@ def render_ai_explanation(data):
 
             <div class="ai-footer-note">
                 <span>ℹ️</span>
-                <span>This explanation is based on patterns observed across the selected
-                anomaly population and the trained anomaly detection model. It does not
-                confirm a fault but helps you understand where to look first.</span>
+                <span>This explanation is based on the observed patterns in your data
+                and the trained anomaly detection model. It does not confirm a fault
+                but helps you understand the possible cause and impact.</span>
             </div>
         </div>
         ''')
@@ -1211,320 +1415,143 @@ def render_ai_explanation(data):
     st.markdown(html_block, unsafe_allow_html=True)
 
 
-def validate_overall_explanation(explanation, evidence):
-    """Evidence-consistency checks for the OVERALL (population) explanation.
-    This checks whether the AI's claims are consistent with the supplied
-    evidence. It does NOT validate a physical diagnosis, and it is not tied
-    to any single selected event's timestamp/duration."""
+def validate_ai_explanation(explanation, evidence, event_rows, selected_event, baseline_df):
+    """Validate only the four user-facing claims that can be checked reliably
+    for the selected anomaly event. This is evidence-consistency validation,
+    not root-cause or recommendation validation.
+    """
     checks = []
 
     def add(name, status, detail):
         checks.append({"name": name, "status": status, "detail": detail})
 
+    # 1) Event time & duration
+    expected_start = pd.to_datetime(selected_event.get("start_time"))
+    expected_end = pd.to_datetime(selected_event.get("end_time"))
+    expected_duration = float(selected_event.get("duration_min", 0) or 0)
+    ai_time = str(explanation.get("when_time", ""))
+    ai_duration = str(explanation.get("when_duration", ""))
+    time_ok = fmt_time(expected_start) in ai_time and f"{round(expected_duration):g}" in ai_duration
+    add(
+        "Event time & duration",
+        "PASS" if time_ok else "FAIL",
+        f"Expected {fmt_time(expected_start)} → {fmt_time(expected_end)}, {expected_duration:.0f} min." if time_ok
+        else "The generated time/duration does not match the selected event.",
+    )
+
     text_parts = [str(explanation.get("headline", "")), str(explanation.get("summary", ""))]
     text_parts += [str(x) for x in explanation.get("why_it_happened", []) if x]
     text_parts += [str(x) for x in explanation.get("recommended_actions", []) if x]
-    when = explanation.get("when_occurred")
-    if isinstance(when, dict):
-        text_parts += [str(when.get(k, "")) for k in ("time_pattern", "duration_pattern", "operating_pattern")]
-    full_text = " ".join(text_parts)
-    lower_text = full_text.lower()
+    ai_text = " ".join(text_parts).lower()
 
-    # 1) Terminology safety.
-    banned_phrases = ["root cause", "probability of", "confidence score", "proven cause", "confirmed fault"]
-    found_banned = [p for p in banned_phrases if p in lower_text]
+    # 2) Power change direction
+    direction_errors = []
+    for col, label in [("dc_power_kw", "DC power"), ("ac_power_kw", "AC power")]:
+        stats = evidence.get("event_observations", {}).get("statistics", {}).get(col, {})
+        if stats.get("start") is None or stats.get("end") is None:
+            continue
+        start_value = float(stats["start"])
+        end_value = float(stats["end"])
+        if end_value < start_value:
+            direction = "decreased"
+            words = ["decreased", "fell", "dropped", "declined", "reduced"]
+        elif end_value > start_value:
+            direction = "increased"
+            words = ["increased", "rose", "grew", "climbed"]
+        else:
+            direction = "stable"
+            words = ["stable", "unchanged", "remained similar", "remained steady"]
+        metric_token = label.split()[0].lower()
+        if metric_token in ai_text and not any(w in ai_text for w in words):
+            direction_errors.append(f"{label} should be described as {direction}")
+
     add(
-        "Terminology safety",
-        "PASS" if not found_banned else "FAIL",
-        "No unsupported causal or probability language detected." if not found_banned
-        else "Unsupported phrasing found: " + ", ".join(found_banned),
+        "Power change direction",
+        "PASS" if not direction_errors else "WARN",
+        "AC/DC power direction matches the event data." if not direction_errors else "; ".join(direction_errors),
     )
 
-    # 2) Persistent event count.
-    expected_events = evidence.get("anomaly_summary", {}).get("persistent_event_count")
-    duration_pattern_text = str(when.get("duration_pattern", "")) if isinstance(when, dict) else ""
-    if expected_events is not None:
-        count_match = re.search(r"\b(\d+)\b", duration_pattern_text)
-        if count_match is None:
-            add("Persistent event count", "WARN", "Duration pattern does not mention an event count to check.")
-        elif int(count_match.group(1)) == int(expected_events):
-            add("Persistent event count", "PASS", f"Matches the {expected_events} persistent event(s) in scope.")
-        else:
-            add("Persistent event count", "WARN", f"Mentions {count_match.group(1)}, evidence shows {expected_events}.")
-    else:
-        add("Persistent event count", "PASS", "No persistent events to check.")
-
-    # 3) Numerical values -- every number+unit mentioned should be
-    # traceable to a number in the supplied evidence (with tolerance).
+    # 3) Numerical values. Approximate language such as "about", "roughly",
+    # "approximately" and "~" is intentionally allowed within tolerance.
     known_numbers = []
-    for stats in evidence.get("event_patterns", {}).values():
-        if isinstance(stats, dict):
-            known_numbers += [v for v in stats.values() if isinstance(v, (int, float))]
-    for stats in evidence.get("anomaly_observations", {}).get("statistics", {}).values():
-        if isinstance(stats, dict):
-            known_numbers += [v for v in stats.values() if isinstance(v, (int, float))]
+    for metric in evidence.get("event_observations", {}).get("statistics", {}).values():
+        if not isinstance(metric, dict):
+            continue
+        for key in ("start", "end", "min", "max", "mean", "median"):
+            value = metric.get(key)
+            if isinstance(value, (int, float)) and pd.notna(value):
+                known_numbers.append(float(value))
+
+    known_numbers.append(expected_duration)
+
     for item in evidence.get("feature_contributions", []):
-        v = item.get("mean_contribution_pct")
-        if isinstance(v, (int, float)):
-            known_numbers.append(v)
-    for ref in evidence.get("healthy_baseline", {}).get("reference", {}).values():
-        if isinstance(ref, dict):
-            known_numbers += [v for v in ref.values() if isinstance(v, (int, float))]
-    for key in ("anomaly_observation_count", "persistent_event_count"):
-        v = evidence.get("anomaly_summary", {}).get(key)
-        if isinstance(v, (int, float)):
-            known_numbers.append(v)
-    known_numbers = [float(n) for n in known_numbers if isinstance(n, (int, float)) and pd.notna(n)]
+        value = item.get("mean_contribution_pct")
+        if isinstance(value, (int, float)) and pd.notna(value):
+            known_numbers.append(float(value))
+
+    for metric in evidence.get("healthy_baseline", {}).get("reference", {}).values():
+        if not isinstance(metric, dict):
+            continue
+        for key in ("median", "typical_low_q10", "typical_high_q90"):
+            value = metric.get(key)
+            if isinstance(value, (int, float)) and pd.notna(value):
+                known_numbers.append(float(value))
 
     measurement_pattern = re.compile(
-        r"(?<![A-Za-z])(-?\d+(?:\.\d+)?)\s*(kW|kw|A|a|°C|C|%|minutes?|mins?|min|Hz|events?)\b"
+        r"(?<![A-Za-z])(-?\d+(?:\.\d+)?)\s*(kW|kw|A|a|°C|C|%|minutes?|mins?|min|kvar|kva|Hz|h)\b"
     )
-    numeric_claims = measurement_pattern.findall(full_text)
+    numeric_claims = measurement_pattern.findall(" ".join(text_parts))
     unmatched = []
     for raw, unit in numeric_claims:
         value = float(raw)
-        if not any(abs(value - k) <= max(2.0, abs(k) * 0.02) for k in known_numbers):
+        # 1.5% relative tolerance, with a minimum absolute tolerance of 2
+        # units, so "roughly 70 kW" can match an actual 70-71 kW change.
+        if not any(abs(value - k) <= max(2.0, abs(k) * 0.015) for k in known_numbers):
             unmatched.append(f"{raw} {unit}")
+
     add(
         "Numerical values",
         "PASS" if not unmatched else "WARN",
-        "Reported figures are consistent with the supplied evidence." if not unmatched
-        else "Unmatched figures: " + ", ".join(unmatched[:5]),
+        "Reported measurement values are consistent with supplied evidence." if not unmatched
+        else "Unmatched numeric claims: " + ", ".join(unmatched[:5]),
     )
 
-    # 4) Date range -- the "time pattern" text should actually reference the
-    # analysis window it is describing, not a generic statement.
-    scope = evidence.get("analysis_scope", {})
-    start_str, end_str = str(scope.get("start_date", "")), str(scope.get("end_date", ""))
-    time_pattern_text = str(when.get("time_pattern", "")) if isinstance(when, dict) else ""
-    if start_str and end_str:
-        start_year, end_year = start_str[:4], end_str[:4]
-        mentions_window = bool(time_pattern_text) and (
-            start_str in time_pattern_text or end_str in time_pattern_text
-            or start_year in time_pattern_text or end_year in time_pattern_text
+    # 4) Temperature / threshold claims.
+    # If the explanation mentions a limit but no independently supplied
+    # temperature reference exists, mark it REVIEW/WARN rather than FAIL.
+    temp_stats = evidence.get("event_observations", {}).get("statistics", {}).get("inverter_temperature_c", {})
+    temp_ref = evidence.get("healthy_baseline", {}).get("reference", {}).get("inverter_temperature_c", {})
+    threshold_words = ["healthy limit", "upper healthy", "upper limit", "below", "within normal", "normal limit"]
+    threshold_claim = any(w in ai_text for w in threshold_words)
+
+    if threshold_claim:
+        upper = temp_ref.get("typical_high_q90")
+        if upper is None:
+            add(
+                "Temperature / threshold claim",
+                "WARN",
+                "Temperature limit is mentioned, but no independently supplied temperature upper reference is available.",
+            )
+        elif temp_stats.get("max") is not None and float(temp_stats["max"]) <= float(upper) + 0.01:
+            add(
+                "Temperature / threshold claim",
+                "PASS",
+                f"Event max temperature is within the supplied upper reference ({float(upper):.1f} °C).",
+            )
+        else:
+            add(
+                "Temperature / threshold claim",
+                "FAIL",
+                "Temperature claim does not match the supplied event/baseline values.",
+            )
+    else:
+        add(
+            "Temperature / threshold claim",
+            "PASS",
+            "No unsupported temperature-limit claim detected.",
         )
-        if mentions_window:
-            add("Date range", "PASS", f"Time pattern references the analysis window ({start_str} to {end_str}).")
-        elif not time_pattern_text:
-            add("Date range", "WARN", "The 'time pattern' field is empty.")
-        else:
-            add(
-                "Date range", "WARN",
-                f"Time pattern does not clearly reference the analysis window ({start_str} to {end_str}).",
-            )
-    else:
-        add("Date range", "PASS", "No analysis window in scope to check.")
-
-    # 5) Baseline-direction consistency -- when the explanation names a
-    # comparison metric together with a directional word ("above",
-    # "elevated", "below", "reduced" ...), that direction should agree with
-    # where the anomaly population's mean actually sits relative to the
-    # healthy baseline's typical range in the supplied evidence.
-    DIRECTION_WORDS = {
-        "above": ["above", "higher", "elevated", "increased", "exceeds", "excess", "spike", "over the typical"],
-        "below": ["below", "lower", "reduced", "decreased", "under the typical", "drop", "dip", "loss"],
-    }
-    metric_labels = {
-        "dc_power_kw": "dc power", "ac_power_kw": "ac power",
-        "inverter_temperature_c": "temperature", "efficiency_pct": "efficiency",
-        "power_factor": "power factor", "dc_current_a": "dc current",
-    }
-    obs_stats = evidence.get("anomaly_observations", {}).get("statistics", {})
-    baseline_ref = evidence.get("healthy_baseline", {}).get("reference", {})
-    direction_mismatches, direction_checked = [], False
-    for metric, label in metric_labels.items():
-        if label not in lower_text:
-            continue
-        m_stats, ref = obs_stats.get(metric), baseline_ref.get(metric)
-        if not m_stats or not ref:
-            continue
-        low, high, mean_val = ref.get("typical_low_q10"), ref.get("typical_high_q90"), m_stats.get("mean")
-        if low is None or high is None or mean_val is None:
-            continue
-        actual = "above" if mean_val > high else ("below" if mean_val < low else "within")
-        if actual == "within":
-            continue
-        idx = lower_text.find(label)
-        window_text = lower_text[max(0, idx - 40): idx + 40]
-        claimed = next((d for d, words in DIRECTION_WORDS.items() if any(w in window_text for w in words)), None)
-        if claimed:
-            direction_checked = True
-            if claimed != actual:
-                direction_mismatches.append(f"{label} (evidence shows {actual} typical range, text suggests {claimed})")
-    if direction_mismatches:
-        add("Baseline-direction consistency", "WARN", "Possible mismatch: " + "; ".join(direction_mismatches))
-    elif direction_checked:
-        add("Baseline-direction consistency", "PASS", "Directional claims agree with the baseline comparison evidence.")
-    else:
-        add("Baseline-direction consistency", "PASS", "No directional baseline claims to check.")
-
-    # 6) Feature-contribution reference -- if evidence identifies top
-    # contributing variables, the explanation should draw on at least one
-    # of them rather than naming unrelated variables.
-    top_features = [
-        str(item.get("feature", "")).replace("_", " ")
-        for item in evidence.get("feature_contributions", [])[:5]
-        if item.get("feature")
-    ]
-    if top_features:
-        mentioned = [f for f in top_features if f and f.lower() in lower_text]
-        if mentioned:
-            add(
-                "Feature contribution reference", "PASS",
-                "References evidence-supported contributing variable(s): " + ", ".join(mentioned) + ".",
-            )
-        else:
-            add(
-                "Feature contribution reference", "WARN",
-                "Explanation does not reference any top contributing variable: " + ", ".join(top_features) + ".",
-            )
-    else:
-        add("Feature contribution reference", "PASS", "No feature-contribution evidence available to check.")
 
     return checks
-
-
-def render_evidence_consistency(checks):
-    if not checks:
-        return
-
-    worst = "PASS"
-    for c in checks:
-        if c["status"] == "FAIL":
-            worst = "FAIL"
-            break
-        if c["status"] == "WARN" and worst == "PASS":
-            worst = "WARN"
-
-    label = "Passed" if worst == "PASS" else "Review"
-
-    with st.expander(f"Evidence consistency: {label}", expanded=False):
-        st.caption(
-            "These checks confirm the explanation's claims are consistent with the "
-            "supplied data. They do not validate a physical diagnosis."
-        )
-        for c in checks:
-            icon_class = {"PASS": "check-pass", "WARN": "check-warn", "FAIL": "check-fail"}[c["status"]]
-            icon = {"PASS": "✓", "WARN": "!", "FAIL": "✕"}[c["status"]]
-            st.markdown(
-                f'<div class="check-row"><div class="check-icon {icon_class}">{icon}</div>'
-                f'<div><div class="check-name">{html.escape(c["name"])}</div>'
-                f'<div class="check-detail">{html.escape(c["detail"])}</div></div></div>',
-                unsafe_allow_html=True,
-            )
-
-
-def _build_events_for_single_series(event_rows_source):
-    """Run-length encode ONE inverter's chronological anomaly rows into
-    persistent events. Assumes the caller has already restricted the input
-    to a single inverter (or a dataset with no inverter_id column at all),
-    so that a time gap always reflects a real gap in that inverter's own
-    readings rather than an artifact of interleaving two inverters'
-    timestamps."""
-    EVENT_DURATION_MIN = 60
-    SAMPLE_INTERVAL_MIN = 5
-    PERSISTENCE_MIN_POINTS = int(EVENT_DURATION_MIN / SAMPLE_INTERVAL_MIN)
-    MAX_RUN_GAP_MIN = SAMPLE_INTERVAL_MIN * 1.5
-
-    work = event_rows_source.sort_values("timestamp").reset_index(drop=True)
-    if work.empty:
-        return []
-
-    time_gap = work["timestamp"].diff().dt.total_seconds() / 60.0
-    work["event_break"] = time_gap.isna() | (time_gap > MAX_RUN_GAP_MIN)
-    work["run_id"] = work["event_break"].cumsum()
-
-    run_sizes = work.groupby("run_id").size()
-    persistent_run_ids = run_sizes[run_sizes >= PERSISTENCE_MIN_POINTS].index
-    work = work[work["run_id"].isin(persistent_run_ids)].copy()
-    if work.empty:
-        return []
-
-    events = []
-    for run_id, event_rows in work.groupby("run_id"):
-        event_rows = event_rows.sort_values("timestamp").reset_index(drop=True)
-        start_time = event_rows["timestamp"].min()
-        end_time = event_rows["timestamp"].max()
-        duration_min = ((end_time - start_time).total_seconds() / 60.0) + SAMPLE_INTERVAL_MIN
-
-        event = {
-            "start_time": start_time,
-            "end_time": end_time,
-            "duration_min": duration_min,
-            "anomaly_count": len(event_rows),
-            "is_persistent_event": True,
-        }
-
-        if "inverter_id" in event_rows.columns:
-            inv_mode = event_rows["inverter_id"].mode()
-            event["inverter_id"] = inv_mode.iloc[0] if len(inv_mode) else None
-
-        if "anomaly_score_ratio" in event_rows.columns:
-            scores = pd.to_numeric(event_rows["anomaly_score_ratio"], errors="coerce")
-            event["max_severity"] = scores.max()
-            event["mean_severity"] = scores.mean()
-
-        if "reconstruction_error" in event_rows.columns:
-            errors = pd.to_numeric(event_rows["reconstruction_error"], errors="coerce")
-            event["max_reconstruction_error"] = errors.max()
-            event["mean_reconstruction_error"] = errors.mean()
-
-        if "inverter_status" in event_rows.columns:
-            mode = event_rows["inverter_status"].mode()
-            event["dominant_status"] = mode.iloc[0] if len(mode) else None
-
-        if "anomaly_type" in event_rows.columns:
-            mode = event_rows["anomaly_type"].mode()
-            event["anomaly_type"] = mode.iloc[0] if len(mode) else None
-
-        events.append(event)
-
-    return events
-
-
-def build_anomaly_events(anomaly_df):
-    """
-    Build persistent anomaly events.
-
-    Fixed rule (unchanged):
-        - Event must contain at least 60 minutes of continuous anomaly.
-        - Current data sampling interval is 5 minutes.
-        - Therefore 12 consecutive anomaly points = 60 minutes of coverage.
-        - A gap greater than 7.5 minutes breaks the event.
-
-    When the data has an `inverter_id` column, persistence is evaluated
-    separately PER INVERTER before events are combined. Building one merged
-    timeline across inverters would let two unrelated inverters' anomalies,
-    interleaved in time, appear to be a single continuous "persistent"
-    event -- and would let a genuine 60+ minute run for one inverter get
-    cut short by an unrelated reading from a different inverter landing in
-    between. This also keeps the "selected inverter" filter meaningful:
-    switching the inverter filter changes which events exist, not just
-    which rows are shown.
-    """
-    if anomaly_df.empty:
-        return pd.DataFrame()
-
-    work = anomaly_df.copy()
-    work["timestamp"] = pd.to_datetime(work["timestamp"], errors="coerce")
-    work = work.dropna(subset=["timestamp"])
-    if work.empty:
-        return pd.DataFrame()
-
-    all_events = []
-    if "inverter_id" in work.columns:
-        for _, group in work.groupby("inverter_id"):
-            all_events.extend(_build_events_for_single_series(group))
-    else:
-        all_events.extend(_build_events_for_single_series(work))
-
-    if not all_events:
-        return pd.DataFrame()
-
-    events_df = pd.DataFrame(all_events).sort_values("start_time").reset_index(drop=True)
-    events_df["event_id"] = [f"Event {i + 1}" for i in range(len(events_df))]
-    return events_df
-
 
 # ============================================================
 # HEADER
@@ -1542,6 +1569,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 # ============================================================
 # FILTERS (inline row, real bordered container)
@@ -1568,10 +1596,20 @@ with st.container(border=True):
     filter_cols = st.columns([1.2, 1.2, 1, 1, 2] if show_inverter_filter else [1.2, 1.2, 1, 2])
 
     with filter_cols[0]:
-        start_date = st.date_input("Start date", value=min_date, min_value=min_date, max_value=max_date)
+        start_date = st.date_input(
+            "Start date",
+            value=min_date,
+            min_value=min_date,
+            max_value=max_date,
+        )
 
     with filter_cols[1]:
-        end_date = st.date_input("End date", value=max_date, min_value=min_date, max_value=max_date)
+        end_date = st.date_input(
+            "End date",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date,
+        )
 
     with filter_cols[2]:
         st.write("")  # align checkbox with the date inputs
@@ -1599,17 +1637,195 @@ with st.container(border=True):
         )
 
 # ============================================================
+# BUILD ANOMALY EVENTS
+# ============================================================
+
+def build_anomaly_events(anomaly_df):
+    """
+    Build persistent anomaly events.
+
+    Fixed rule:
+        - Event must contain at least 60 minutes of continuous anomaly.
+        - Current data sampling interval is 5 minutes.
+        - Therefore 12 consecutive anomaly points = 60 minutes of coverage.
+        - A gap greater than 7.5 minutes breaks the event.
+    """
+
+    if anomaly_df.empty:
+        return pd.DataFrame()
+
+    # --------------------------------------------------------
+    # FIXED EVENT RULE
+    # --------------------------------------------------------
+    EVENT_DURATION_MIN = 60
+    SAMPLE_INTERVAL_MIN = 5
+
+    # 60 minutes / 5 minutes = 12 points
+    PERSISTENCE_MIN_POINTS = int(
+        EVENT_DURATION_MIN / SAMPLE_INTERVAL_MIN
+    )
+
+    # Allow normal timestamp spacing, but break larger gaps
+    MAX_RUN_GAP_MIN = SAMPLE_INTERVAL_MIN * 1.5
+
+    # --------------------------------------------------------
+    # PREPARE DATA
+    # --------------------------------------------------------
+    work = anomaly_df.copy()
+
+    work["timestamp"] = pd.to_datetime(
+        work["timestamp"],
+        errors="coerce"
+    )
+
+    work = (
+        work
+        .dropna(subset=["timestamp"])
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
+
+    if work.empty:
+        return pd.DataFrame()
+
+    # --------------------------------------------------------
+    # FIND CONTINUOUS ANOMALY RUNS
+    # --------------------------------------------------------
+    time_gap = (
+        work["timestamp"]
+        .diff()
+        .dt.total_seconds()
+        / 60.0
+    )
+
+    work["event_break"] = (
+        time_gap.isna()
+        | (time_gap > MAX_RUN_GAP_MIN)
+    )
+
+    work["run_id"] = work["event_break"].cumsum()
+
+    # --------------------------------------------------------
+    # KEEP ONLY 60-MINUTE PERSISTENT EVENTS
+    # --------------------------------------------------------
+    run_sizes = work.groupby("run_id").size()
+
+    persistent_run_ids = run_sizes[
+        run_sizes >= PERSISTENCE_MIN_POINTS
+    ].index
+
+    work = work[
+        work["run_id"].isin(persistent_run_ids)
+    ].copy()
+
+    if work.empty:
+        return pd.DataFrame()
+
+    # --------------------------------------------------------
+    # CREATE EVENT SUMMARY
+    # --------------------------------------------------------
+    events = []
+
+    for event_number, (run_id, event_rows) in enumerate(
+        work.groupby("run_id"),
+        start=1
+    ):
+
+        event_rows = (
+            event_rows
+            .sort_values("timestamp")
+            .reset_index(drop=True)
+        )
+
+        start_time = event_rows["timestamp"].min()
+        end_time = event_rows["timestamp"].max()
+
+        # 12 points at 5-minute sampling cover 60 minutes
+        duration_min = (
+            (end_time - start_time).total_seconds() / 60.0
+        ) + SAMPLE_INTERVAL_MIN
+
+        event = {
+            "event_id": f"Event {event_number}",
+            "run_id": int(run_id),
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_min": duration_min,
+            "anomaly_count": len(event_rows),
+            "is_persistent_event": True,
+        }
+
+        # ----------------------------------------------------
+        # SEVERITY
+        # ----------------------------------------------------
+        if "anomaly_score_ratio" in event_rows.columns:
+
+            scores = pd.to_numeric(
+                event_rows["anomaly_score_ratio"],
+                errors="coerce"
+            )
+
+            event["max_severity"] = scores.max()
+            event["mean_severity"] = scores.mean()
+
+        # ----------------------------------------------------
+        # RECONSTRUCTION ERROR
+        # ----------------------------------------------------
+        if "reconstruction_error" in event_rows.columns:
+
+            errors = pd.to_numeric(
+                event_rows["reconstruction_error"],
+                errors="coerce"
+            )
+
+            event["max_reconstruction_error"] = errors.max()
+            event["mean_reconstruction_error"] = errors.mean()
+
+        # ----------------------------------------------------
+        # DOMINANT INVERTER STATUS
+        # ----------------------------------------------------
+        if "inverter_status" in event_rows.columns:
+
+            mode = event_rows["inverter_status"].mode()
+
+            event["dominant_status"] = (
+                mode.iloc[0]
+                if len(mode)
+                else None
+            )
+
+        # ----------------------------------------------------
+        # DOMINANT ANOMALY TYPE
+        # ----------------------------------------------------
+        if "anomaly_type" in event_rows.columns:
+
+            mode = event_rows["anomaly_type"].mode()
+
+            event["anomaly_type"] = (
+                mode.iloc[0]
+                if len(mode)
+                else None
+            )
+
+        events.append(event)
+
+    return pd.DataFrame(events).reset_index(drop=True)
+# ============================================================
 # FILTER DATA
 # ============================================================
 
 # filtered_df: the scored evaluation data (has anomaly results) -- powers
 # the KPIs, Overview chart, Anomalies table, and Investigate tab.
 if start_date <= end_date:
-    filtered_df = df[(df["timestamp"].dt.date >= start_date) & (df["timestamp"].dt.date <= end_date)].copy()
+    filtered_df = df[
+        (df["timestamp"].dt.date >= start_date) & (df["timestamp"].dt.date <= end_date)
+    ].copy()
     # filtered_trend_df: the full raw history -- powers the Trends tab so
     # dates before the evaluation period still show something (falls back
     # to filtered_df itself when trend_data.parquet isn't available).
-    filtered_trend_df = trend_df[(trend_df["timestamp"].dt.date >= start_date) & (trend_df["timestamp"].dt.date <= end_date)].copy()
+    filtered_trend_df = trend_df[
+        (trend_df["timestamp"].dt.date >= start_date) & (trend_df["timestamp"].dt.date <= end_date)
+    ].copy()
 else:
     filtered_df = df.iloc[0:0].copy()  # empty until the dates are fixed
     filtered_trend_df = trend_df.iloc[0:0].copy()
@@ -1617,7 +1833,9 @@ else:
 if selected_inverter != "All" and "inverter_id" in filtered_df.columns:
     filtered_df = filtered_df[filtered_df["inverter_id"] == selected_inverter].copy()
 if selected_inverter != "All" and "inverter_id" in filtered_trend_df.columns:
-    filtered_trend_df = filtered_trend_df[filtered_trend_df["inverter_id"] == selected_inverter].copy()
+    filtered_trend_df = filtered_trend_df[
+        filtered_trend_df["inverter_id"] == selected_inverter
+    ].copy()
 
 if show_anomalies_only:
     filtered_df = filtered_df[filtered_df["anomaly_flag"]].copy()
@@ -1628,22 +1846,23 @@ if filtered_df.empty and filtered_trend_df.empty:
 total_observations = len(filtered_df)
 total_anomalies = int(filtered_df["anomaly_flag"].sum()) if total_observations else 0
 anomaly_rate = (total_anomalies / total_observations * 100) if total_observations else None
+max_temperature = (
+    filtered_df["inverter_temperature_c"].max()
+    if "inverter_temperature_c" in filtered_df.columns and total_observations
+    else None
+)
 
-anomaly_df = filtered_df[filtered_df["anomaly_flag"]].copy() if total_observations else filtered_df.copy()
+anomaly_df = (
+    filtered_df[filtered_df["anomaly_flag"]].copy()
+    if total_observations
+    else filtered_df.copy()
+)
 
-# Build continuous anomaly events (selected inverter and date range only).
+# Build continuous anomaly events
 events_df = build_anomaly_events(anomaly_df)
 
-# Population-level baseline comparison, reused by the Overview tab and by
-# the AI evidence (so the numbers displayed and the numbers given to the
-# AI are exactly the same).
-comparison_metric_names = [m for m, _, _ in COMPARISON_METRICS]
-baseline_reference = aggregate_baseline_reference(baseline_df, comparison_metric_names)
-comparison_rows = compare_population_to_baseline(anomaly_df, baseline_reference)
-key_obs = build_key_observations(anomaly_df, events_df, comparison_rows)
-
 # ------------------------------------------------------------
-# OVERVIEW / KPIs
+# OVERVIEW
 # ------------------------------------------------------------
 st.markdown("## Overview")
 st.caption("A high-level view of inverter observations and detected anomalies for the selected period.")
@@ -1652,366 +1871,246 @@ kpi_cols = st.columns(4)
 with kpi_cols[0]:
     st.metric("Total Observations", f"{total_observations:,}")
 with kpi_cols[1]:
-    st.metric("Anomalous Observations", f"{total_anomalies:,}")
+    st.metric(
+        "Anomalous Observations",
+        f"{total_anomalies:,}",
+    )
 with kpi_cols[2]:
     st.metric("Anomaly Rate", fmt_num(anomaly_rate, 2, "%"))
-with kpi_cols[3]:
-    st.metric("Persistent Events", f"{len(events_df):,}")
 
 if total_observations > 0 and total_anomalies == 0:
     st.caption("✅ No anomalies found in this period — everything looks normal.")
 
-# ============================================================
-# HEALTHY BASELINE
-# ============================================================
-
-st.markdown("### Healthy Baseline")
-st.caption(
-    "Typical healthy operating range, derived from the trained model's healthy "
-    "reference data. A reading outside this range is not automatically a fault."
-)
-
-baseline_rows = get_healthy_baseline_summary(baseline_df)
-if baseline_rows:
-    baseline_cols = st.columns(len(baseline_rows))
-    for col, (label, value) in zip(baseline_cols, baseline_rows):
-        with col:
-            st.metric(label=label, value=value)
-else:
-    st.caption("No healthy baseline reference values are available for this dataset.")
-
-# ============================================================
-# TABS
-# ============================================================
-
-tab_overview, tab_ai, tab_events, tab_investigate, tab_trends = st.tabs(
-    ["Overview", "AI Analysis", "Anomaly Events", "Investigation", "Trends"]
-)
-
-# ------------------------------------------------------------
-# TAB: OVERVIEW (anomaly chart + key observations + baseline comparison)
-# ------------------------------------------------------------
-with tab_overview:
-    st.markdown("### Anomaly Score Over Time")
-    st.caption(
-        "Higher points mean more unusual behavior relative to the trained model. "
-        "Red dots are flagged anomalies; shaded bands mark persistent events."
+if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=filtered_df["timestamp"],
+            y=filtered_df["reconstruction_error"],
+            mode="lines",
+            name="Anomaly Score",
+            line=dict(color="#4C78A8", width=1.5),
+        )
     )
-
-    if total_observations > 0 and "reconstruction_error" in filtered_df.columns:
-        fig = go.Figure()
+    anomaly_points = filtered_df[filtered_df["anomaly_flag"]]
+    if len(anomaly_points) > 0:
         fig.add_trace(
             go.Scatter(
-                x=filtered_df["timestamp"],
-                y=filtered_df["reconstruction_error"],
-                mode="lines",
-                name="Anomaly Score",
-                line=dict(color="#4C78A8", width=1.5),
-                hovertemplate="%{x|%Y-%m-%d %H:%M}<br>Anomaly score: %{y:.3f}<extra></extra>",
+                x=anomaly_points["timestamp"],
+                y=anomaly_points["reconstruction_error"],
+                mode="markers",
+                name="Flagged anomaly",
+                marker=dict(size=8, color="#E45756", symbol="circle"),
             )
         )
-        anomaly_points = filtered_df[filtered_df["anomaly_flag"]]
-        if len(anomaly_points) > 0:
-            fig.add_trace(
-                go.Scatter(
-                    x=anomaly_points["timestamp"],
-                    y=anomaly_points["reconstruction_error"],
-                    mode="markers",
-                    name="Flagged anomaly",
-                    marker=dict(size=8, color="#E45756", symbol="circle"),
-                    hovertemplate="%{x|%Y-%m-%d %H:%M}<br>Anomaly score: %{y:.3f}<extra>Flagged</extra>",
-                )
-            )
-        for _, ev in events_df.iterrows():
-            fig.add_vrect(x0=ev["start_time"], x1=ev["end_time"], fillcolor="#E45756", opacity=0.08, line_width=0)
-
-        fig.update_layout(
-            xaxis_title="Time",
-            yaxis_title="Anomaly Score",
-            yaxis_type="log",
-            hovermode="x unified",
-            height=380,
-            template="plotly_white",
-            margin=dict(t=20, l=55, r=25, b=45),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        )
-        st.plotly_chart(fig, width="stretch")
-        if not events_df.empty:
-            st.caption("Shaded bands mark persistent anomaly events (≥60 min of continuous anomalous readings).")
-    else:
-        st.info("No anomaly score data available for the selected period.")
-
-    st.markdown("### Key Observations")
-    st.caption("What to investigate first, based only on the evidence above.")
-    render_key_observations(key_obs)
-
-    st.markdown("### Anomalies vs Healthy Baseline")
-    st.caption(
-        "Average values observed during anomalies compared with the typical healthy "
-        "range. Supporting evidence only — it does not prove a fault or its cause."
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title="Anomaly Score",
+        yaxis_type="log",
+        hovermode="x unified",
+        height=380,
+        template="plotly_white",
+        margin=dict(t=20, l=55, r=25, b=45),
     )
-    if comparison_rows:
-        comparison_table = pd.DataFrame(comparison_rows).rename(
-            columns={
-                "label": "Variable",
-                "observed": "Observed during anomalies",
-                "typical_range": "Typical healthy range",
-                "status": "Status",
-            }
-        )
-        st.dataframe(comparison_table, width="stretch", hide_index=True)
-    else:
-        st.caption("No overlapping variables between the anomaly data and the healthy baseline.")
-
-    st.markdown("### Data Quality")
-    render_optional_data_validation(filtered_df, label="the selected period's data")
+    st.plotly_chart(fig, width="stretch")
+else:
+    st.info("No anomaly score data available for the selected period.")
 
 # ------------------------------------------------------------
-# TAB: AI ANALYSIS (overall population explanation)
+# OVERALL ANOMALY EXPLANATION
 # ------------------------------------------------------------
-with tab_ai:
-    st.markdown("## Overall Anomaly Explanation")
-    st.caption(
-        "AI analysis of the recurring patterns across all detected anomalies "
-        "in the selected period. No individual anomaly is selected."
-    )
-
-    if len(anomaly_df) == 0:
-        st.info("No anomalies were detected in the selected period, so there is no anomaly pattern to explain.")
-    else:
-        header_col, button_col = st.columns([5.5, 1.5])
-        with header_col:
-            st.markdown('<div class="ai-title">Why are anomalies occurring?</div>', unsafe_allow_html=True)
-        with button_col:
-            regenerate_overall = st.button(
-                "Regenerate",
-                type="primary",
-                use_container_width=True,
-                help="Generate a fresh overall explanation from all detected anomalies.",
-            )
-
-        overall_cache_key = f"overall_{selected_inverter}_{start_date}_{end_date}"
-        cached_overall = st.session_state["ai_explanations"].get(overall_cache_key)
-
-        if regenerate_overall or cached_overall is None:
-            evidence = build_population_evidence(
-                anomaly_df, events_df, baseline_df, start_date, end_date, selected_inverter
-            )
-            with st.spinner("Analyzing all detected anomalies..."):
-                try:
-                    explanation = generate_overall_ai_explanation(evidence)
-                    checks = validate_overall_explanation(explanation, evidence)
-                    cached_overall = {
-                        "explanation": explanation,
-                        "evidence": evidence,
-                        "checks": checks,
-                        "error": None,
-                    }
-                except Exception as e:
-                    cached_overall = {"explanation": None, "evidence": None, "checks": None, "error": str(e)}
-            st.session_state["ai_explanations"][overall_cache_key] = cached_overall
-
-        if cached_overall.get("error"):
-            st.error(f"AI explanation failed: {cached_overall['error']}")
-        elif cached_overall.get("explanation"):
-            render_ai_explanation(cached_overall["explanation"])
-            render_evidence_consistency(cached_overall.get("checks"))
-        else:
-            st.warning("AI did not return an overall explanation.")
-
+#
+# The AI does NOT explain one selected anomaly.
+#
+# It analyzes ALL anomaly observations and ALL persistent
+# anomaly events in the currently selected period/inverter.
+#
+# Goal:
+#   Explain the general patterns behind the anomalies.
 # ------------------------------------------------------------
-# TAB: ANOMALY EVENTS
-# ------------------------------------------------------------
-with tab_events:
-    st.markdown("## Detected Anomaly Events")
-    st.caption("Persistent anomaly events detected in the selected period (≥60 minutes of continuous anomalous readings).")
 
-    if len(events_df) > 0:
-        event_table = events_df.copy()
-        if "event_id" not in event_table.columns:
-            event_table["event_id"] = [f"Event {i + 1}" for i in range(len(event_table))]
+st.markdown("## Overall Anomaly Explanation")
 
-        display_columns = [
-            "event_id", "inverter_id", "start_time", "end_time", "duration_min",
-            "anomaly_count", "max_severity", "mean_severity", "dominant_status", "anomaly_type",
-        ]
-        display_columns = [c for c in display_columns if c in event_table.columns]
+st.caption(
+    "AI analysis of the overall patterns observed across "
+    "all detected anomalies in the selected period."
+)
 
-        friendly_names = {
-            "event_id": "Event ID",
-            "inverter_id": "Inverter",
-            "start_time": "Start Time",
-            "end_time": "End Time",
-            "duration_min": "Duration (min)",
-            "anomaly_count": "Anomaly Points",
-            "max_severity": "Max Severity",
-            "mean_severity": "Mean Severity",
-            "dominant_status": "Dominant Status",
-            "anomaly_type": "Dominant Anomaly Type",
-        }
 
-        table = event_table[display_columns].rename(columns=friendly_names).sort_values("Start Time")
-        for col in ["Max Severity", "Mean Severity", "Duration (min)"]:
-            if col in table.columns:
-                table[col] = pd.to_numeric(table[col], errors="coerce").round(2)
+if len(anomaly_df) > 0:
 
-        st.dataframe(table, width="stretch", hide_index=True)
-        st.caption("Severity values reflect the anomaly score, not a probability of failure.")
-    else:
-        if total_observations > 0:
-            st.success("✅ No anomaly events were detected in this period.")
-        else:
-            st.info("No readings in this date range. Try a different range above.")
+    ai_header_col, ai_button_col = st.columns([5.5, 1.5])
 
-# ------------------------------------------------------------
-# TAB: INVESTIGATION (per-event detail)
-# ------------------------------------------------------------
-with tab_investigate:
-    st.markdown("## Investigate a Specific Anomaly Event")
-    st.caption(
-        "Detailed evidence for one persistent anomaly event, for operator investigation. "
-        "Feature contributions and baseline comparisons are supporting evidence only — "
-        "they do not prove a physical cause."
-    )
-
-    if events_df.empty:
-        st.info("No persistent anomaly events in the selected period to investigate.")
-    else:
-        events_sorted = events_df.sort_values("start_time").reset_index(drop=True)
-        event_labels = [
-            f"{row.get('event_id', f'Event {i + 1}')}"
-            f"{' (' + str(row['inverter_id']) + ')' if 'inverter_id' in events_sorted.columns and pd.notna(row.get('inverter_id')) else ''}"
-            f": {fmt_time(row['start_time'])} → {fmt_time(row['end_time'])}"
-            for i, row in events_sorted.iterrows()
-        ]
-        chosen_idx = st.selectbox("Select an event", range(len(event_labels)), format_func=lambda i: event_labels[i])
-        event_row = events_sorted.iloc[chosen_idx]
-        reference_time = event_row["start_time"]
-        # Prefer the event's own inverter (set when the dataset has multiple
-        # inverters); fall back to the top filter bar's selection so nearest-
-        # timestamp lookups below never cross into a different inverter's
-        # readings.
-        event_inverter_id = event_row.get("inverter_id") if "inverter_id" in events_sorted.columns else None
-        if event_inverter_id is None or (isinstance(event_inverter_id, float) and pd.isna(event_inverter_id)):
-            event_inverter_id = selected_inverter if selected_inverter != "All" else None
+    with ai_header_col:
 
         st.markdown(
-            f'<div class="event-summary-card"><div class="event-summary-title">'
-            f'{fmt_time(event_row["start_time"])} → {fmt_time(event_row["end_time"])}'
-            f'<span class="event-badge">{fmt_num(event_row.get("duration_min"), 0, " min")}</span></div>'
-            f'{event_row.get("anomaly_count", 0)} anomalous readings in this event.</div>',
+            '<div class="ai-title">'
+            'Why are anomalies occurring?'
+            '</div>',
             unsafe_allow_html=True,
         )
 
-        detail_cols = st.columns(2)
-        with detail_cols[0]:
-            st.markdown("#### Operating Context")
-            context = get_operating_context(reference_time, event_inverter_id)
-            if context.get("error"):
-                st.caption(context["error"])
-            else:
-                st.json(context)
+        st.caption(
+            "This explanation considers all detected anomaly "
+            "observations and persistent anomaly events. "
+            "It does not focus on a single event."
+        )
 
-        with detail_cols[1]:
-            st.markdown("#### Feature Contributions")
-            contrib = get_feature_contributions(reference_time, event_inverter_id)
-            if contrib.get("error"):
-                st.caption(contrib["error"])
-            elif contrib.get("contributions"):
-                for item in contrib["contributions"][:5]:
-                    st.markdown(
-                        f"- **{item['feature']}**: {fmt_num(item['contribution_pct'], 1, '%')} "
-                        "contribution to unusual reconstruction error"
-                    )
-                st.caption(
-                    "These variables contributed most to unusual reconstruction error — "
-                    "this does not identify which one caused the anomaly."
+
+    with ai_button_col:
+
+        regenerate_overall = st.button(
+            "Regenerate",
+            type="primary",
+            use_container_width=True,
+            help=(
+                "Generate a fresh overall explanation "
+                "from all detected anomalies."
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Generate overall explanation
+    # --------------------------------------------------------
+
+    overall_cache_key = (
+        f"overall_{selected_inverter}_"
+        f"{start_date}_{end_date}"
+    )
+
+
+    cached_overall = st.session_state[
+        "ai_explanations"
+    ].get(overall_cache_key)
+
+
+    if regenerate_overall or cached_overall is None:
+
+        with st.spinner(
+            "Analyzing all detected anomalies..."
+        ):
+
+            try:
+
+                (
+                    ai_explanation,
+                    ai_evidence,
+                ) = generate_overall_ai_explanation(
+                    anomaly_df=anomaly_df,
+                    events_df=events_df,
+                    start_date=start_date,
+                    end_date=end_date,
+                    selected_inverter=selected_inverter,
                 )
-            else:
-                st.caption("No feature-contribution data available for this event.")
 
-        st.markdown("#### Comparison to Healthy Baseline")
-        baseline_context = get_baseline_context(reference_time, event_inverter_id)
-        if baseline_context.get("error"):
-            st.caption(baseline_context["error"])
-        else:
-            ref_rows = []
-            for metric, values in baseline_context.get("reference", {}).items():
-                ref_rows.append({
-                    "Metric": metric,
-                    "Typical healthy range": f"{fmt_num(values.get('typical_low_q10'))}–{fmt_num(values.get('typical_high_q90'))}",
-                    "Typical (median)": fmt_num(values.get("median")),
-                })
-            if ref_rows:
-                st.dataframe(pd.DataFrame(ref_rows), width="stretch", hide_index=True)
-                st.caption("This is a comparison reference only. It does not establish cause.")
-            else:
-                st.caption("No matching healthy reference group for these operating conditions.")
 
-        st.markdown("#### 24-Hour Trend Before This Event")
-        pre_trend = get_pre_anomaly_trend(reference_time, hours=24, inverter_id=event_inverter_id)
-        if pre_trend.get("error"):
-            st.caption(pre_trend["error"])
-        else:
-            st.caption(
-                f"{pre_trend['observations']} observations between "
-                f"{fmt_time(pre_trend['window_start'])} and {fmt_time(pre_trend['window_end'])}."
-            )
-            stat_rows = [{"Variable": k, **v} for k, v in pre_trend.get("statistics", {}).items()]
-            if stat_rows:
-                st.dataframe(pd.DataFrame(stat_rows), width="stretch", hide_index=True)
-            else:
-                st.caption("No pre-event trend statistics available.")
+                cached_overall = {
+                    "explanation": ai_explanation,
+                    "evidence": ai_evidence,
+                    "error": None,
+                }
 
-        st.markdown("#### Data Quality for This Event")
-        event_window_rows = filtered_df[
-            (filtered_df["timestamp"] >= event_row["start_time"]) & (filtered_df["timestamp"] <= event_row["end_time"])
-        ]
-        event_window_rows = _filter_by_inverter(event_window_rows, event_inverter_id)
-        render_optional_data_validation(event_window_rows, label="this event's readings")
 
-# ------------------------------------------------------------
-# TAB: TRENDS (raw history, including pre-evaluation period)
-# ------------------------------------------------------------
-with tab_trends:
-    st.markdown("## Historical Trends")
-    if not has_trend_data:
-        st.caption("`trend_data.parquet` not found — showing the evaluation-period data only.")
+            except Exception as e:
 
-    if filtered_trend_df.empty:
-        st.info("No historical readings in this date range.")
+                cached_overall = {
+                    "explanation": None,
+                    "evidence": None,
+                    "error": str(e),
+                }
+
+
+            st.session_state[
+                "ai_explanations"
+            ][overall_cache_key] = cached_overall
+
+
+    # --------------------------------------------------------
+    # Display overall explanation
+    # --------------------------------------------------------
+
+    if cached_overall.get("error"):
+
+        st.error(
+            "AI explanation failed: "
+            f"{cached_overall['error']}"
+        )
+
+
+    elif cached_overall.get("explanation"):
+
+        render_ai_explanation(
+            cached_overall["explanation"]
+        )
+
+
     else:
-        trend_metric_options = [
-            c for c in [
-                "ac_power_kw", "dc_power_kw", "inverter_temperature_c",
-                "ambient_temperature_c", "efficiency_pct", "dc_current_a", "ac_current_a",
-            ]
-            if c in filtered_trend_df.columns
-        ]
-        if trend_metric_options:
-            chosen_metrics = st.multiselect(
-                "Variables to plot", trend_metric_options, default=trend_metric_options[:2]
-            )
-            if chosen_metrics:
-                tfig = go.Figure()
-                for m in chosen_metrics:
-                    tfig.add_trace(
-                        go.Scatter(x=filtered_trend_df["timestamp"], y=filtered_trend_df[m], mode="lines", name=m)
-                    )
-                if has_trend_data:
-                    tfig.add_vrect(
-                        x0=eval_min_date, x1=eval_max_date,
-                        fillcolor="#0F3554", opacity=0.04, line_width=0,
-                        annotation_text="Scored evaluation period", annotation_position="top left",
-                    )
-                tfig.update_layout(
-                    height=380, template="plotly_white", hovermode="x unified",
-                    margin=dict(t=30, l=55, r=25, b=45),
-                )
-                st.plotly_chart(tfig, width="stretch")
-                st.caption(
-                    "Dates outside the scored evaluation period show raw readings only — "
-                    "they were not evaluated by the anomaly detector."
-                )
-        else:
-            st.info("No plottable trend variables found in this dataset.")
+
+        st.warning(
+            "AI did not return an overall explanation."
+        )
+
+
+else:
+
+    st.info(
+        "No anomalies were detected in the selected period, "
+        "so there is no anomaly pattern to explain."
+    )
+# ------------------------------------------------------------
+# DETECTED ANOMALIES
+# ------------------------------------------------------------
+st.markdown("## Detected Anomalies")
+st.caption("Observations flagged by the anomaly detector in the selected period.")
+
+if len(events_df) > 0:
+
+    event_table = events_df.copy()
+
+    event_table["Event"] = [
+        f"Event {i + 1}"
+        for i in range(len(event_table))
+    ]
+
+    display_columns = [
+        "Event",
+        "start_time",
+        "end_time",
+        "duration_min",
+        "anomaly_count",
+    ]
+
+    display_columns = [
+        c for c in display_columns
+        if c in event_table.columns
+    ]
+
+    friendly_names = {
+        "start_time": "Start Time",
+        "end_time": "End Time",
+        "duration_min": "Duration (min)",
+        "anomaly_count": "Anomaly Points"
+    }
+
+    table = (
+        event_table[display_columns]
+        .rename(columns=friendly_names)
+        .sort_values("Start Time")
+    )
+
+    st.dataframe(
+        table,
+        width="stretch",
+        hide_index=True
+    )
+
+else:
+    if total_observations > 0:
+        st.success(
+            "✅ No anomaly events were detected in this period."
+        )
+    else:
+        st.info(
+            "No readings in this date range. Try a different range above."
+        )
