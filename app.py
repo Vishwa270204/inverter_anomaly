@@ -965,7 +965,7 @@ SUPPLIED EVIDENCE:
 """ + json.dumps(evidence, default=str, ensure_ascii=False)
 
     response = client.chat.completions.create(
-        model=GROQ_MODEL,
+        model="openai/gpt-oss-20b",
         messages=[
             {"role": "system", "content": "Return only valid JSON. Do not use markdown."},
             {"role": "user", "content": prompt},
