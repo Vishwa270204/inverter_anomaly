@@ -965,21 +965,58 @@ SUPPLIED EVIDENCE:
 """ + json.dumps(evidence, default=str, ensure_ascii=False)
 
     response = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
+        model=GROQ_MODEL,
         messages=[
-            {"role": "system", "content": "Return only valid JSON. Do not use markdown."},
+            {
+                "role": "system",
+                "content": (
+                    "Return ONLY a valid JSON object. "
+                    "Do not use markdown fences. "
+                    "Do not add commentary before or after the JSON."
+                ),
+            },
             {"role": "user", "content": prompt},
         ],
-        temperature=0.1,
-        max_tokens=1200,
+        temperature=0.0,
+        max_tokens=1600,
+        response_format={"type": "json_object"},
     )
 
-    raw = response.choices[0].message.content.strip()
+    raw = (response.choices[0].message.content or "").strip()
+
+    # Some model/provider combinations can still return fenced JSON or
+    # surrounding text. Normalize that before parsing.
     if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(
+            r"^```(?:json)?\s*",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        )
         raw = re.sub(r"\s*```$", "", raw)
 
-    return json.loads(raw), evidence
+    # Extract the outermost JSON object if the provider returned any
+    # accidental text around it.
+    start = raw.find("{")
+    end = raw.rfind("}")
+
+    if start >= 0 and end > start:
+        raw = raw[start:end + 1]
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "The AI returned malformed JSON. "
+            f"Parser error: {exc}."
+        ) from exc
+
+    if not isinstance(parsed, dict):
+        raise RuntimeError(
+            "The AI returned valid JSON, but it was not a JSON object."
+        )
+
+    return parsed, evidence
 
 
 def render_ai_explanation(data):
