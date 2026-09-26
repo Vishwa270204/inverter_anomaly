@@ -1616,9 +1616,6 @@ with tab_overview:
     else:
         st.info("No anomaly score data available for the selected period.")
 
-    st.markdown("### Key Observations")
-    st.caption("What to investigate first, based only on the evidence above.")
-    render_key_observations(key_obs)
 
     st.markdown("### Anomalies vs Healthy Baseline")
     st.caption(
