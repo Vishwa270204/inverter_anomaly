@@ -1348,22 +1348,6 @@ def render_evidence_consistency(checks):
 
     label = "Passed" if worst == "PASS" else "Review"
 
-    with st.expander(f"Evidence consistency: {label}", expanded=False):
-        st.caption(
-            "These checks confirm the explanation's claims are consistent with the "
-            "supplied data. They do not validate a physical diagnosis."
-        )
-        for c in checks:
-            icon_class = {"PASS": "check-pass", "WARN": "check-warn", "FAIL": "check-fail"}[c["status"]]
-            icon = {"PASS": "✓", "WARN": "!", "FAIL": "✕"}[c["status"]]
-            st.markdown(
-                f'<div class="check-row"><div class="check-icon {icon_class}">{icon}</div>'
-                f'<div><div class="check-name">{html.escape(c["name"])}</div>'
-                f'<div class="check-detail">{html.escape(c["detail"])}</div></div></div>',
-                unsafe_allow_html=True,
-            )
-
-
 def build_anomaly_events(anomaly_df):
     """
     Build persistent anomaly events.
@@ -1599,7 +1583,7 @@ else:
 # ============================================================
 
 tab_overview, tab_ai, tab_events, tab_investigate, tab_trends = st.tabs(
-    ["Overview", "AI Analysis", "Anomaly Events", "Investigation", "Trends"]
+    ["Overview", "AI Analysis", "Anomaly Events"]
 )
 
 # ------------------------------------------------------------
@@ -1774,147 +1758,3 @@ with tab_events:
         else:
             st.info("No readings in this date range. Try a different range above.")
 
-# ------------------------------------------------------------
-# TAB: INVESTIGATION (per-event detail)
-# ------------------------------------------------------------
-with tab_investigate:
-    st.markdown("## Investigate a Specific Anomaly Event")
-    st.caption(
-        "Detailed evidence for one persistent anomaly event, for operator investigation. "
-        "Feature contributions and baseline comparisons are supporting evidence only — "
-        "they do not prove a physical cause."
-    )
-
-    if events_df.empty:
-        st.info("No persistent anomaly events in the selected period to investigate.")
-    else:
-        events_sorted = events_df.sort_values("start_time").reset_index(drop=True)
-        event_labels = [
-            f"Event {i + 1}: {fmt_time(row['start_time'])} → {fmt_time(row['end_time'])}"
-            for i, row in events_sorted.iterrows()
-        ]
-        chosen_idx = st.selectbox("Select an event", range(len(event_labels)), format_func=lambda i: event_labels[i])
-        event_row = events_sorted.iloc[chosen_idx]
-        reference_time = event_row["start_time"]
-
-        st.markdown(
-            f'<div class="event-summary-card"><div class="event-summary-title">'
-            f'{fmt_time(event_row["start_time"])} → {fmt_time(event_row["end_time"])}'
-            f'<span class="event-badge">{fmt_num(event_row.get("duration_min"), 0, " min")}</span></div>'
-            f'{event_row.get("anomaly_count", 0)} anomalous readings in this event.</div>',
-            unsafe_allow_html=True,
-        )
-
-        detail_cols = st.columns(2)
-        with detail_cols[0]:
-            st.markdown("#### Operating Context")
-            context = get_operating_context(reference_time)
-            if context.get("error"):
-                st.caption(context["error"])
-            else:
-                st.json(context)
-
-        with detail_cols[1]:
-            st.markdown("#### Feature Contributions")
-            contrib = get_feature_contributions(
-                reference_time, selected_inverter if selected_inverter != "All" else None
-            )
-            if contrib.get("error"):
-                st.caption(contrib["error"])
-            elif contrib.get("contributions"):
-                for item in contrib["contributions"][:5]:
-                    st.markdown(
-                        f"- **{item['feature']}**: {fmt_num(item['contribution_pct'], 1, '%')} "
-                        "contribution to unusual reconstruction error"
-                    )
-                st.caption(
-                    "These variables contributed most to unusual reconstruction error — "
-                    "this does not identify which one caused the anomaly."
-                )
-            else:
-                st.caption("No feature-contribution data available for this event.")
-
-        st.markdown("#### Comparison to Healthy Baseline")
-        baseline_context = get_baseline_context(reference_time)
-        if baseline_context.get("error"):
-            st.caption(baseline_context["error"])
-        else:
-            ref_rows = []
-            for metric, values in baseline_context.get("reference", {}).items():
-                ref_rows.append({
-                    "Metric": metric,
-                    "Typical healthy range": f"{fmt_num(values.get('typical_low_q10'))}–{fmt_num(values.get('typical_high_q90'))}",
-                    "Typical (median)": fmt_num(values.get("median")),
-                })
-            if ref_rows:
-                st.dataframe(pd.DataFrame(ref_rows), width="stretch", hide_index=True)
-                st.caption("This is a comparison reference only. It does not establish cause.")
-            else:
-                st.caption("No matching healthy reference group for these operating conditions.")
-
-        st.markdown("#### 24-Hour Trend Before This Event")
-        pre_trend = get_pre_anomaly_trend(reference_time, hours=24)
-        if pre_trend.get("error"):
-            st.caption(pre_trend["error"])
-        else:
-            st.caption(
-                f"{pre_trend['observations']} observations between "
-                f"{fmt_time(pre_trend['window_start'])} and {fmt_time(pre_trend['window_end'])}."
-            )
-            stat_rows = [{"Variable": k, **v} for k, v in pre_trend.get("statistics", {}).items()]
-            if stat_rows:
-                st.dataframe(pd.DataFrame(stat_rows), width="stretch", hide_index=True)
-            else:
-                st.caption("No pre-event trend statistics available.")
-
-        st.markdown("#### Data Quality for This Event")
-        event_window_rows = filtered_df[
-            (filtered_df["timestamp"] >= event_row["start_time"]) & (filtered_df["timestamp"] <= event_row["end_time"])
-        ]
-        render_optional_data_validation(event_window_rows, label="this event's readings")
-
-# ------------------------------------------------------------
-# TAB: TRENDS (raw history, including pre-evaluation period)
-# ------------------------------------------------------------
-with tab_trends:
-    st.markdown("## Historical Trends")
-    if not has_trend_data:
-        st.caption("`trend_data.parquet` not found — showing the evaluation-period data only.")
-
-    if filtered_trend_df.empty:
-        st.info("No historical readings in this date range.")
-    else:
-        trend_metric_options = [
-            c for c in [
-                "ac_power_kw", "dc_power_kw", "inverter_temperature_c",
-                "ambient_temperature_c", "efficiency_pct", "dc_current_a", "ac_current_a",
-            ]
-            if c in filtered_trend_df.columns
-        ]
-        if trend_metric_options:
-            chosen_metrics = st.multiselect(
-                "Variables to plot", trend_metric_options, default=trend_metric_options[:2]
-            )
-            if chosen_metrics:
-                tfig = go.Figure()
-                for m in chosen_metrics:
-                    tfig.add_trace(
-                        go.Scatter(x=filtered_trend_df["timestamp"], y=filtered_trend_df[m], mode="lines", name=m)
-                    )
-                if has_trend_data:
-                    tfig.add_vrect(
-                        x0=eval_min_date, x1=eval_max_date,
-                        fillcolor="#0F3554", opacity=0.04, line_width=0,
-                        annotation_text="Scored evaluation period", annotation_position="top left",
-                    )
-                tfig.update_layout(
-                    height=380, template="plotly_white", hovermode="x unified",
-                    margin=dict(t=30, l=55, r=25, b=45),
-                )
-                st.plotly_chart(tfig, width="stretch")
-                st.caption(
-                    "Dates outside the scored evaluation period show raw readings only — "
-                    "they were not evaluated by the anomaly detector."
-                )
-        else:
-            st.info("No plottable trend variables found in this dataset.")
