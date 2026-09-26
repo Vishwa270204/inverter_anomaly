@@ -842,27 +842,6 @@ def build_key_observations(anomaly_df, events_df, comparison_rows):
     ]
     return obs
 
-
-def render_key_observations(obs):
-    lines = [f"**{obs['anomaly_count']:,}** anomalous observations across **{obs['event_count']}** persistent event(s)."]
-    if obs["typical_duration"] is not None:
-        lines.append(f"Typical persistent-event duration: **~{obs['typical_duration']:.0f} min**.")
-    if obs["max_severity"] is not None:
-        lines.append(f"Maximum observed anomaly score (not a probability): **{obs['max_severity']:.2f}**.")
-    if obs["top_features"]:
-        lines.append("Variables contributing most to unusual reconstruction error: **" + ", ".join(obs["top_features"]) + "**.")
-    if obs["off_baseline_metrics"]:
-        lines.append(
-            "Outside the typical healthy range during anomalies: **" + ", ".join(obs["off_baseline_metrics"])
-            + "** (supporting evidence only, not proof of cause)."
-        )
-    if len(lines) == 1 and obs["anomaly_count"] == 0:
-        st.caption("No anomalies in the selected period.")
-        return
-    for line in lines:
-        st.markdown(f"- {line}")
-
-
 def run_optional_data_validation(frame):
     """Best-effort integration with data_validation.py. Exact function
     signatures can vary by deployment, so every call is guarded -- a
