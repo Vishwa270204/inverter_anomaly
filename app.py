@@ -1654,7 +1654,7 @@ def build_anomaly_events(anomaly_df):
     if anomaly_df.empty:
         return pd.DataFrame()
 
-    EVENT_DURATION_MIN = 60f
+    EVENT_DURATION_MIN = 60
     SAMPLE_INTERVAL_MIN = 5
     PERSISTENCE_MIN_POINTS = int(EVENT_DURATION_MIN / SAMPLE_INTERVAL_MIN)
     MAX_RUN_GAP_MIN = SAMPLE_INTERVAL_MIN * 1.5
