@@ -1582,7 +1582,7 @@ else:
 # TABS
 # ============================================================
 
-tab_overview, tab_ai, tab_events, tab_investigate, tab_trends = st.tabs(
+tab_overview, tab_ai, tab_events = st.tabs(
     ["Overview", "AI Analysis", "Anomaly Events"]
 )
 
