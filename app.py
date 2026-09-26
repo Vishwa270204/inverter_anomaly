@@ -1067,7 +1067,64 @@ SUPPLIED EVIDENCE:
         ],
         temperature=0.0,
         max_tokens=1600,
-        response_format={"type": "json_object"},
+        response_format={
+    "type": "json_schema",
+    "json_schema": {
+        "name": "inverter_anomaly_explanation",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "headline": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "why_it_happened": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "when_occurred": {
+                    "type": "object",
+                    "properties": {
+                        "time_pattern": {
+                            "type": "string"
+                        },
+                        "duration_pattern": {
+                            "type": "string"
+                        },
+                        "operating_pattern": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "time_pattern",
+                        "duration_pattern",
+                        "operating_pattern"
+                    ],
+                    "additionalProperties": False
+                },
+                "recommended_actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            },
+            "required": [
+                "headline",
+                "summary",
+                "why_it_happened",
+                "when_occurred",
+                "recommended_actions"
+            ],
+            "additionalProperties": False
+        }
+    }
+},
     )
 
     raw = (response.choices[0].message.content or "").strip()
