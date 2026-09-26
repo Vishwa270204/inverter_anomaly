@@ -551,6 +551,8 @@ COMPARISON_METRICS = [
     ("dc_power_kw", "DC Power", " kW"),
     ("ac_power_kw", "AC Power", " kW"),
     ("inverter_temperature_c", "Temperature", " °C"),
+    ("efficiency_pct", "Efficiency", "%"),
+    ("power_factor", "Power Factor", ""),
     ("dc_current_a", "DC Current", " A"),
 ]
 
@@ -842,6 +844,27 @@ def build_key_observations(anomaly_df, events_df, comparison_rows):
     ]
     return obs
 
+
+def render_key_observations(obs):
+    lines = [f"**{obs['anomaly_count']:,}** anomalous observations across **{obs['event_count']}** persistent event(s)."]
+    if obs["typical_duration"] is not None:
+        lines.append(f"Typical persistent-event duration: **~{obs['typical_duration']:.0f} min**.")
+    if obs["max_severity"] is not None:
+        lines.append(f"Maximum observed anomaly score (not a probability): **{obs['max_severity']:.2f}**.")
+    if obs["top_features"]:
+        lines.append("Variables contributing most to unusual reconstruction error: **" + ", ".join(obs["top_features"]) + "**.")
+    if obs["off_baseline_metrics"]:
+        lines.append(
+            "Outside the typical healthy range during anomalies: **" + ", ".join(obs["off_baseline_metrics"])
+            + "** (supporting evidence only, not proof of cause)."
+        )
+    if len(lines) == 1 and obs["anomaly_count"] == 0:
+        st.caption("No anomalies in the selected period.")
+        return
+    for line in lines:
+        st.markdown(f"- {line}")
+
+
 def run_optional_data_validation(frame):
     """Best-effort integration with data_validation.py. Exact function
     signatures can vary by deployment, so every call is guarded -- a
@@ -980,7 +1003,21 @@ def build_population_evidence(anomaly_df, events_df, baseline_df, start_date, en
             }
     evidence["anomaly_observations"] = {"observation_count": int(len(anomaly_df)), "statistics": stats}
 
-    evidence["healthy_baseline"] = {"reference": aggregate_baseline_reference(baseline_df, numeric_cols)}
+    baseline_reference = aggregate_baseline_reference(baseline_df, numeric_cols)
+    evidence["healthy_baseline"] = {"reference": baseline_reference}
+    evidence["baseline_comparisons"] = compare_population_to_baseline(anomaly_df, baseline_reference)
+
+    # Time-pattern evidence is derived from the same anomaly population.  This
+    # lets the validator check explicit day/night claims instead of accepting
+    # them merely because the word appears in the prompt.
+    time_patterns = {}
+    if "timestamp" in anomaly_df.columns:
+        ts = pd.to_datetime(anomaly_df["timestamp"], errors="coerce").dropna()
+        if not ts.empty:
+            time_patterns["earliest_anomaly"] = clean_value(ts.min())
+            time_patterns["latest_anomaly"] = clean_value(ts.max())
+            time_patterns["hour_counts"] = {str(int(k)): int(v) for k, v in ts.dt.hour.value_counts().sort_index().items()}
+    evidence["time_patterns"] = time_patterns
 
     return evidence
 
@@ -1044,64 +1081,7 @@ SUPPLIED EVIDENCE:
         ],
         temperature=0.0,
         max_tokens=1600,
-        response_format={
-    "type": "json_schema",
-    "json_schema": {
-        "name": "inverter_anomaly_explanation",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "headline": {
-                    "type": "string"
-                },
-                "summary": {
-                    "type": "string"
-                },
-                "why_it_happened": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "when_occurred": {
-                    "type": "object",
-                    "properties": {
-                        "time_pattern": {
-                            "type": "string"
-                        },
-                        "duration_pattern": {
-                            "type": "string"
-                        },
-                        "operating_pattern": {
-                            "type": "string"
-                        }
-                    },
-                    "required": [
-                        "time_pattern",
-                        "duration_pattern",
-                        "operating_pattern"
-                    ],
-                    "additionalProperties": False
-                },
-                "recommended_actions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            },
-            "required": [
-                "headline",
-                "summary",
-                "why_it_happened",
-                "when_occurred",
-                "recommended_actions"
-            ],
-            "additionalProperties": False
-        }
-    }
-},
+        response_format={"type": "json_object"},
     )
 
     raw = (response.choices[0].message.content or "").strip()
@@ -1228,88 +1208,408 @@ def render_ai_explanation(data):
 
 
 def validate_overall_explanation(explanation, evidence):
-    """Evidence-consistency checks for the OVERALL (population) explanation.
-    This checks whether the AI's claims are consistent with the supplied
-    evidence. It does NOT validate a physical diagnosis, and it is not tied
-    to any single selected event's timestamp/duration."""
+    """Validate the OVERALL AI explanation against the exact evidence supplied to it.
+
+    This is an evidence-consistency gate, not a physical diagnosis validator.
+    Hard contradictions are FAIL; claims that cannot be checked from the supplied
+    evidence are WARN.  The validator deliberately checks each claim against the
+    metric/pattern it refers to instead of matching a number against an unrelated
+    number somewhere else in the evidence.
+    """
     checks = []
 
     def add(name, status, detail):
         checks.append({"name": name, "status": status, "detail": detail})
 
+    # ------------------------------------------------------------------
+    # 0) Required response structure.
+    # ------------------------------------------------------------------
+    required = {
+        "headline": str,
+        "summary": str,
+        "why_it_happened": list,
+        "when_occurred": dict,
+        "recommended_actions": list,
+    }
+    structure_errors = []
+    for key, expected_type in required.items():
+        if key not in explanation:
+            structure_errors.append(f"missing '{key}'")
+        elif not isinstance(explanation[key], expected_type):
+            structure_errors.append(f"'{key}' has type {type(explanation[key]).__name__}, expected {expected_type.__name__}")
+
+    when = explanation.get("when_occurred")
+    if isinstance(when, dict):
+        for key in ("time_pattern", "duration_pattern", "operating_pattern"):
+            if key not in when or not isinstance(when.get(key), str):
+                structure_errors.append(f"'when_occurred.{key}' is missing or not a string")
+
+    if structure_errors:
+        add("Response structure", "FAIL", "; ".join(structure_errors))
+    else:
+        add("Response structure", "PASS", "All required explanation fields are present with the expected types.")
+
+    # ------------------------------------------------------------------
+    # Flatten the operator-facing text.
+    # ------------------------------------------------------------------
     text_parts = [str(explanation.get("headline", "")), str(explanation.get("summary", ""))]
     text_parts += [str(x) for x in explanation.get("why_it_happened", []) if x]
     text_parts += [str(x) for x in explanation.get("recommended_actions", []) if x]
-    when = explanation.get("when_occurred")
     if isinstance(when, dict):
         text_parts += [str(when.get(k, "")) for k in ("time_pattern", "duration_pattern", "operating_pattern")]
     full_text = " ".join(text_parts)
     lower_text = full_text.lower()
 
-    # 1) Terminology safety.
-    banned_phrases = ["root cause", "probability of", "confidence score", "proven cause", "confirmed fault"]
+    # ------------------------------------------------------------------
+    # 1) Terminology / unsupported causal language.
+    # ------------------------------------------------------------------
+    banned_phrases = [
+        "root cause",
+        "probability of",
+        "confidence score",
+        "proven cause",
+        "confirmed fault",
+        "caused by",
+        "caused the",
+        "caused this",
+        "resulted from",
+        "responsible for",
+        "triggered by",
+        "due to",
+        "because of",
+    ]
     found_banned = [p for p in banned_phrases if p in lower_text]
     add(
         "Terminology safety",
-        "PASS" if not found_banned else "FAIL",
-        "No unsupported causal or probability language detected." if not found_banned
+        "FAIL" if found_banned else "PASS",
+        "No unsupported causal, probability, or diagnosis language detected."
+        if not found_banned
         else "Unsupported phrasing found: " + ", ".join(found_banned),
     )
 
-    # 2) Persistent event count.
+    # ------------------------------------------------------------------
+    # 2) Persistent event count -- an explicit contradiction is FAIL.
+    # ------------------------------------------------------------------
     expected_events = evidence.get("anomaly_summary", {}).get("persistent_event_count")
     duration_pattern_text = str(when.get("duration_pattern", "")) if isinstance(when, dict) else ""
+    count_matches = re.findall(r"\b(\d+)\s+(?:persistent\s+)?events?\b", duration_pattern_text.lower())
     if expected_events is not None:
-        count_match = re.search(r"\b(\d+)\b", duration_pattern_text)
-        if count_match is None:
-            add("Persistent event count", "WARN", "Duration pattern does not mention an event count to check.")
-        elif int(count_match.group(1)) == int(expected_events):
-            add("Persistent event count", "PASS", f"Matches the {expected_events} persistent event(s) in scope.")
+        if count_matches:
+            mentioned_counts = [int(x) for x in count_matches]
+            bad_counts = [x for x in mentioned_counts if x != int(expected_events)]
+            if bad_counts:
+                add(
+                    "Persistent event count",
+                    "FAIL",
+                    f"AI mentions {bad_counts[0]} persistent event(s), but evidence contains {int(expected_events)}.",
+                )
+            else:
+                add("Persistent event count", "PASS", f"Matches the {int(expected_events)} persistent event(s) in scope.")
         else:
-            add("Persistent event count", "WARN", f"Mentions {count_match.group(1)}, evidence shows {expected_events}.")
+            add("Persistent event count", "WARN", "The explanation does not explicitly state the persistent-event count.")
     else:
-        add("Persistent event count", "PASS", "No persistent events to check.")
+        add("Persistent event count", "PASS", "No persistent-event count is available to check.")
 
-    # 3) Numerical values -- every number+unit mentioned should be
-    # traceable to a number in the supplied evidence (with tolerance).
-    known_numbers = []
-    for stats in evidence.get("event_patterns", {}).values():
-        if isinstance(stats, dict):
-            known_numbers += [v for v in stats.values() if isinstance(v, (int, float))]
-    for stats in evidence.get("anomaly_observations", {}).get("statistics", {}).values():
-        if isinstance(stats, dict):
-            known_numbers += [v for v in stats.values() if isinstance(v, (int, float))]
-    for item in evidence.get("feature_contributions", []):
-        v = item.get("mean_contribution_pct")
-        if isinstance(v, (int, float)):
-            known_numbers.append(v)
-    for ref in evidence.get("healthy_baseline", {}).get("reference", {}).values():
-        if isinstance(ref, dict):
-            known_numbers += [v for v in ref.values() if isinstance(v, (int, float))]
-    for key in ("anomaly_observation_count", "persistent_event_count"):
-        v = evidence.get("anomaly_summary", {}).get(key)
-        if isinstance(v, (int, float)):
-            known_numbers.append(v)
-    known_numbers = [float(n) for n in known_numbers if isinstance(n, (int, float)) and pd.notna(n)]
+    # ------------------------------------------------------------------
+    # 3) Duration claims -- compare only against duration statistics.
+    # ------------------------------------------------------------------
+    duration_stats = evidence.get("event_patterns", {}).get("duration_min", {})
+    duration_values = []
+    if isinstance(duration_stats, dict):
+        duration_values = [
+            float(v) for v in duration_stats.values()
+            if isinstance(v, (int, float)) and pd.notna(v)
+        ]
 
-    measurement_pattern = re.compile(
-        r"(?<![A-Za-z])(-?\d+(?:\.\d+)?)\s*(kW|kw|A|a|°C|C|%|minutes?|mins?|min|Hz|events?)\b"
+    duration_claims = []
+    duration_re = re.compile(r"(?<![A-Za-z])(-?\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|min)\b", re.I)
+    for raw, unit in duration_re.findall(duration_pattern_text):
+        value = float(raw) * (60.0 if unit.lower().startswith("hour") or unit.lower().startswith("hr") else 1.0)
+        duration_claims.append(value)
+
+    if duration_claims and duration_values:
+        bad = [v for v in duration_claims if not any(abs(v - k) <= max(5.0, abs(k) * 0.05) for k in duration_values)]
+        if bad:
+            add(
+                "Duration values",
+                "FAIL",
+                "Duration claim(s) do not match the supplied event duration statistics: "
+                + ", ".join(f"{v:g} min" for v in bad[:5]) + ".",
+            )
+        else:
+            add("Duration values", "PASS", "Reported durations match the supplied event duration statistics.")
+    elif duration_claims and not duration_values:
+        add("Duration values", "WARN", "The explanation gives numeric durations, but no event-duration statistics are available.")
+    else:
+        add("Duration values", "PASS", "No numeric duration claim requiring verification was made.")
+
+    # ------------------------------------------------------------------
+    # 4) Time/daylight pattern -- verify day/night statements against counts.
+    # ------------------------------------------------------------------
+    operating = evidence.get("operating_patterns", {})
+    daylight_counts = operating.get("is_daylight", {}) if isinstance(operating, dict) else {}
+    daylight_true = 0
+    daylight_false = 0
+    if isinstance(daylight_counts, dict):
+        for key, value in daylight_counts.items():
+            if str(key).lower() in {"true", "1", "yes"}:
+                daylight_true += int(value)
+            elif str(key).lower() in {"false", "0", "no"}:
+                daylight_false += int(value)
+
+    time_claims = []
+    time_pattern_text = str(when.get("time_pattern", "")).lower() if isinstance(when, dict) else ""
+    if re.search(r"\b(?:mostly|mainly|primarily|predominantly)?\s*(?:during )?(?:daylight|daytime|daylight hours|sunlight)\b", time_pattern_text):
+        time_claims.append("day")
+    if re.search(r"\b(?:mostly|mainly|primarily|predominantly)?\s*(?:during )?(?:night|nighttime|night hours)\b", time_pattern_text):
+        time_claims.append("night")
+
+    if time_claims and (daylight_true + daylight_false) > 0:
+        daylight_majority = daylight_true >= daylight_false
+        contradictory = ("day" in time_claims and not daylight_majority) or ("night" in time_claims and daylight_majority)
+        if contradictory:
+            observed = "daylight" if daylight_majority else "night"
+            add("Day/night pattern", "FAIL", f"AI describes a {', '.join(time_claims)} pattern, but anomaly observations are predominantly {observed}.")
+        else:
+            add("Day/night pattern", "PASS", "Day/night wording is consistent with the anomaly observation distribution.")
+    elif time_claims:
+        add("Day/night pattern", "WARN", "The explanation makes a day/night claim, but the supplied evidence has no usable daylight distribution.")
+    else:
+        add("Day/night pattern", "PASS", "No explicit day/night pattern claim was made.")
+
+    # ------------------------------------------------------------------
+    # 5) Operating-condition claims -- exact categorical values only.
+    # ------------------------------------------------------------------
+    categorical_fields = {
+        "inverter_status": "inverter status",
+        "quality_code": "quality code",
+        "communication_status": "communication status",
+        "fault_code": "fault code",
+        "alarm_code": "alarm code",
+    }
+    operating_pattern_text = str(when.get("operating_pattern", "")).lower() if isinstance(when, dict) else ""
+    present_operating_values = []
+    checked_operating_claims = []
+    for field, label in categorical_fields.items():
+        counts = operating.get(field, {}) if isinstance(operating, dict) else {}
+        if not isinstance(counts, dict) or not counts:
+            continue
+        for raw_value in counts.keys():
+            value = str(raw_value).strip().lower()
+            if not value:
+                continue
+            present_operating_values.append((field, label, value))
+            if len(value) >= 2 and re.search(r"(?<![A-Za-z0-9_])" + re.escape(value) + r"(?![A-Za-z0-9_])", operating_pattern_text):
+                checked_operating_claims.append(f"{label}='{value}'")
+
+    # Common operator synonyms are checked against the union of the actual
+    # categorical values.  This avoids falsely failing because, for example,
+    # 'online' is absent from fault_code but present in inverter_status.
+    synonym_groups = {
+        "offline": {"offline", "off", "stopped", "shutdown"},
+        "online": {"online", "on", "running", "run"},
+        "fault": {"fault", "faulted", "error"},
+        "alarm": {"alarm", "warning", "warn"},
+    }
+    unsupported_operating_claims = []
+    for synonym, aliases in synonym_groups.items():
+        if not re.search(r"(?<![A-Za-z])" + re.escape(synonym) + r"(?![A-Za-z])", operating_pattern_text):
+            continue
+        supported = any(
+            any(alias == value or alias in value for alias in aliases)
+            for _, _, value in present_operating_values
+        )
+        if not supported:
+            unsupported_operating_claims.append(synonym)
+
+    if unsupported_operating_claims:
+        add(
+            "Operating-condition claims",
+            "FAIL",
+            "Unsupported operating-condition claim(s): " + ", ".join(unsupported_operating_claims[:5]) + ".",
+        )
+    elif checked_operating_claims:
+        add("Operating-condition claims", "PASS", "Categorical operating-condition claims are present in the supplied evidence.")
+    else:
+        add("Operating-condition claims", "PASS", "No unsupported categorical operating-condition claim was detected.")
+
+    # ------------------------------------------------------------------
+    # 6) Feature/contributor claims -- only call something a contributor if
+    # it appears in the supplied contribution evidence.
+    # ------------------------------------------------------------------
+    feature_items = evidence.get("feature_contributions", [])
+    feature_names = []
+    top_features = []
+    for item in feature_items if isinstance(feature_items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        feature = str(item.get("feature", "")).strip().lower()
+        if feature:
+            feature_names.append(feature)
+            if len(top_features) < 3:
+                top_features.append(feature)
+
+    feature_aliases = {
+        "inverter temperature": "inverter_temperature_c",
+        "ambient temperature": "ambient_temperature_c",
+        "dc power": "dc_power_kw",
+        "ac power": "ac_power_kw",
+        "dc current": "dc_current_a",
+        "ac current": "ac_current_a",
+        "power factor": "power_factor",
+        "frequency": "frequency_hz",
+        "efficiency": "efficiency_pct",
+        "poa": "poa_w_m2",
+        "ghi": "ghi_w_m2",
+        "packet loss": "packet_loss_pct",
+        "communication latency": "communication_latency_ms",
+    }
+    contributor_phrases = re.search(
+        r"(?:top|main|key|largest|leading|primary)\s+(?:contributing|contributor|contributors|feature|features)",
+        lower_text,
     )
-    numeric_claims = measurement_pattern.findall(full_text)
-    unmatched = []
-    for raw, unit in numeric_claims:
-        value = float(raw)
-        if not any(abs(value - k) <= max(2.0, abs(k) * 0.02) for k in known_numbers):
-            unmatched.append(f"{raw} {unit}")
-    add(
-        "Numerical values",
-        "PASS" if not unmatched else "WARN",
-        "Reported figures are consistent with the supplied evidence." if not unmatched
-        else "Unmatched figures: " + ", ".join(unmatched[:5]),
+    if contributor_phrases:
+        matched = [
+            canonical for alias, canonical in feature_aliases.items()
+            if alias in lower_text and canonical in feature_names
+        ]
+        if not matched:
+            add("Feature contribution claims", "FAIL", "The explanation describes a main/key contributor, but does not name a feature supported by the supplied contribution evidence.")
+        else:
+            unsupported = [m for m in matched if m not in top_features]
+            if unsupported:
+                add("Feature contribution claims", "FAIL", "A main/key contributor claim does not match the top supplied contributors: " + ", ".join(unsupported) + ".")
+            else:
+                add("Feature contribution claims", "PASS", "Main/key contributor claims match the supplied top feature contributions.")
+    else:
+        add("Feature contribution claims", "PASS", "No unsupported main/key contributor claim was made.")
+
+    # ------------------------------------------------------------------
+    # 7) Metric-specific numeric validation.  Unlike the previous validator,
+    # a value is only accepted against the metric it is describing.
+    # ------------------------------------------------------------------
+    metric_aliases = {
+        "dc_power_kw": ["dc power"],
+        "dc_current_a": ["dc current"],
+        "ac_power_kw": ["ac power"],
+        "ac_current_a": ["ac current"],
+        "power_factor": ["power factor"],
+        "frequency_hz": ["frequency"],
+        "efficiency_pct": ["efficiency"],
+        "inverter_temperature_c": ["inverter temperature", "inverter temp"],
+        "ambient_temperature_c": ["ambient temperature", "ambient temp"],
+        "poa_w_m2": ["poa"],
+        "ghi_w_m2": ["ghi"],
+        "packet_loss_pct": ["packet loss"],
+        "communication_latency_ms": ["communication latency", "latency"],
+    }
+    unit_for_metric = {
+        "dc_power_kw": "kw", "ac_power_kw": "kw", "dc_current_a": "a", "ac_current_a": "a",
+        "power_factor": "", "frequency_hz": "hz", "efficiency_pct": "%",
+        "inverter_temperature_c": "c", "ambient_temperature_c": "c", "poa_w_m2": "w/m2",
+        "ghi_w_m2": "w/m2", "packet_loss_pct": "%", "communication_latency_ms": "ms",
+    }
+    metric_failures = []
+    numeric_claim_pattern = re.compile(
+        r"(-?\d+(?:\.\d+)?)\s*(kW|kw|A|a|°C|C|%|Hz|hz|ms|W/m2|w/m2)\b"
     )
+    anomaly_stats = evidence.get("anomaly_observations", {}).get("statistics", {})
+
+    for metric, aliases in metric_aliases.items():
+        if metric not in anomaly_stats or not isinstance(anomaly_stats[metric], dict):
+            continue
+        expected = [
+            float(v) for v in anomaly_stats[metric].values()
+            if isinstance(v, (int, float)) and pd.notna(v)
+        ]
+        if not expected:
+            continue
+
+        for alias in aliases:
+            for match in re.finditer(re.escape(alias), lower_text):
+                # Associate the metric only with the nearest numeric measurement
+                # in the same sentence. This prevents a value belonging to the
+                # previous/next sentence or another metric from being reused.
+                left_boundary = max(
+                    lower_text.rfind(".", 0, match.start()),
+                    lower_text.rfind("!", 0, match.start()),
+                    lower_text.rfind("?", 0, match.start()),
+                    lower_text.rfind(";", 0, match.start()),
+                ) + 1
+                right_candidates = [
+                    p for p in (
+                        lower_text.find(".", match.end()),
+                        lower_text.find("!", match.end()),
+                        lower_text.find("?", match.end()),
+                        lower_text.find(";", match.end()),
+                    ) if p >= 0
+                ]
+                right_boundary = min(right_candidates) if right_candidates else len(lower_text)
+                candidates = list(numeric_claim_pattern.finditer(lower_text, left_boundary, right_boundary))
+                if not candidates:
+                    continue
+                nearest = min(candidates, key=lambda m: min(abs(m.start() - match.end()), abs(match.start() - m.end())))
+                raw, unit = nearest.groups()
+                value = float(raw)
+                normalized_unit = unit.lower()
+                expected_unit = unit_for_metric[metric]
+                compatible = (
+                    not expected_unit
+                    or (expected_unit == "kw" and normalized_unit == "kw")
+                    or (expected_unit == "a" and normalized_unit == "a")
+                    or (expected_unit == "c" and normalized_unit in {"c", "°c"})
+                    or (expected_unit == "hz" and normalized_unit == "hz")
+                    or (expected_unit == "%" and normalized_unit == "%")
+                    or (expected_unit == "ms" and normalized_unit == "ms")
+                    or (expected_unit == "w/m2" and normalized_unit == "w/m2")
+                )
+                if not compatible:
+                    metric_failures.append(f"{raw} {unit} near {metric}")
+                elif not any(abs(value - k) <= max(0.5, abs(k) * 0.05) for k in expected):
+                    metric_failures.append(f"{raw} {unit} for {metric}")
+
+    if metric_failures:
+        add("Metric-specific numerical claims", "FAIL", "Unsupported metric/value combination(s): " + ", ".join(metric_failures[:5]) + ".")
+    else:
+        add("Metric-specific numerical claims", "PASS", "Numeric metric claims match the statistics of the metric they describe.")
+
+    # ------------------------------------------------------------------
+    # 8) Baseline-direction claims -- validate against the same aggregated
+    # healthy range used by the dashboard.
+    # ------------------------------------------------------------------
+    baseline_checks = evidence.get("baseline_comparisons", [])
+    baseline_failures = []
+    baseline_claim_found = False
+    if isinstance(baseline_checks, list):
+        for row in baseline_checks:
+            if not isinstance(row, dict):
+                continue
+            label = str(row.get("label", "")).lower()
+            status = str(row.get("status", "")).lower()
+            if not label:
+                continue
+            # Only validate if the AI explicitly references this metric label.
+            label_tokens = [t for t in re.findall(r"[a-z0-9]+", label) if len(t) >= 3]
+            if not label_tokens:
+                continue
+            if not any(token in lower_text for token in label_tokens):
+                continue
+            baseline_claim_found = True
+            if "above typical range" in status:
+                if not re.search(r"(?:above|higher|elevated|exceed|exceeded|greater than)", lower_text):
+                    baseline_failures.append(f"{label}: evidence is above typical range, but AI does not support that direction")
+            elif "below typical range" in status:
+                if not re.search(r"(?:below|lower|reduced|decreased|less than)", lower_text):
+                    baseline_failures.append(f"{label}: evidence is below typical range, but AI does not support that direction")
+
+    if baseline_failures:
+        add("Healthy-baseline claims", "FAIL", "; ".join(baseline_failures[:3]))
+    elif baseline_claim_found:
+        add("Healthy-baseline claims", "PASS", "Baseline-direction claims are consistent with the supplied anomaly-vs-healthy comparison.")
+    else:
+        add("Healthy-baseline claims", "PASS", "No unsupported baseline-direction claim was detected.")
 
     return checks
-
 
 def render_evidence_consistency(checks):
     if not checks:
@@ -1324,6 +1624,22 @@ def render_evidence_consistency(checks):
             worst = "WARN"
 
     label = "Passed" if worst == "PASS" else "Review"
+
+    with st.expander(f"Evidence consistency: {label}", expanded=False):
+        st.caption(
+            "These checks confirm the explanation's claims are consistent with the "
+            "supplied data. They do not validate a physical diagnosis."
+        )
+        for c in checks:
+            icon_class = {"PASS": "check-pass", "WARN": "check-warn", "FAIL": "check-fail"}[c["status"]]
+            icon = {"PASS": "✓", "WARN": "!", "FAIL": "✕"}[c["status"]]
+            st.markdown(
+                f'<div class="check-row"><div class="check-icon {icon_class}">{icon}</div>'
+                f'<div><div class="check-name">{html.escape(c["name"])}</div>'
+                f'<div class="check-detail">{html.escape(c["detail"])}</div></div></div>',
+                unsafe_allow_html=True,
+            )
+
 
 def build_anomaly_events(anomaly_df):
     """
@@ -1559,8 +1875,8 @@ else:
 # TABS
 # ============================================================
 
-tab_overview, tab_ai, tab_events = st.tabs(
-    ["Overview", "AI Analysis", "Anomaly Events"]
+tab_overview, tab_ai, tab_events, tab_investigate, tab_trends = st.tabs(
+    ["Overview", "AI Analysis", "Anomaly Events", "Investigation", "Trends"]
 )
 
 # ------------------------------------------------------------
@@ -1616,6 +1932,9 @@ with tab_overview:
     else:
         st.info("No anomaly score data available for the selected period.")
 
+    st.markdown("### Key Observations")
+    st.caption("What to investigate first, based only on the evidence above.")
+    render_key_observations(key_obs)
 
     st.markdown("### Anomalies vs Healthy Baseline")
     st.caption(
@@ -1634,6 +1953,9 @@ with tab_overview:
         st.dataframe(comparison_table, width="stretch", hide_index=True)
     else:
         st.caption("No overlapping variables between the anomaly data and the healthy baseline.")
+
+    st.markdown("### Data Quality")
+    render_optional_data_validation(filtered_df, label="the selected period's data")
 
 # ------------------------------------------------------------
 # TAB: AI ANALYSIS (overall population explanation)
@@ -1683,8 +2005,17 @@ with tab_ai:
         if cached_overall.get("error"):
             st.error(f"AI explanation failed: {cached_overall['error']}")
         elif cached_overall.get("explanation"):
-            render_ai_explanation(cached_overall["explanation"])
-            render_evidence_consistency(cached_overall.get("checks"))
+            checks = cached_overall.get("checks") or []
+            has_fail = any(c.get("status") == "FAIL" for c in checks if isinstance(c, dict))
+            render_evidence_consistency(checks)
+            if has_fail:
+                st.error(
+                    "The AI explanation was withheld because one or more claims "
+                    "contradict the supplied evidence. Regenerate the explanation "
+                    "after reviewing the evidence-consistency checks."
+                )
+            else:
+                render_ai_explanation(cached_overall["explanation"])
         else:
             st.warning("AI did not return an overall explanation.")
 
@@ -1729,3 +2060,147 @@ with tab_events:
         else:
             st.info("No readings in this date range. Try a different range above.")
 
+# ------------------------------------------------------------
+# TAB: INVESTIGATION (per-event detail)
+# ------------------------------------------------------------
+with tab_investigate:
+    st.markdown("## Investigate a Specific Anomaly Event")
+    st.caption(
+        "Detailed evidence for one persistent anomaly event, for operator investigation. "
+        "Feature contributions and baseline comparisons are supporting evidence only — "
+        "they do not prove a physical cause."
+    )
+
+    if events_df.empty:
+        st.info("No persistent anomaly events in the selected period to investigate.")
+    else:
+        events_sorted = events_df.sort_values("start_time").reset_index(drop=True)
+        event_labels = [
+            f"Event {i + 1}: {fmt_time(row['start_time'])} → {fmt_time(row['end_time'])}"
+            for i, row in events_sorted.iterrows()
+        ]
+        chosen_idx = st.selectbox("Select an event", range(len(event_labels)), format_func=lambda i: event_labels[i])
+        event_row = events_sorted.iloc[chosen_idx]
+        reference_time = event_row["start_time"]
+
+        st.markdown(
+            f'<div class="event-summary-card"><div class="event-summary-title">'
+            f'{fmt_time(event_row["start_time"])} → {fmt_time(event_row["end_time"])}'
+            f'<span class="event-badge">{fmt_num(event_row.get("duration_min"), 0, " min")}</span></div>'
+            f'{event_row.get("anomaly_count", 0)} anomalous readings in this event.</div>',
+            unsafe_allow_html=True,
+        )
+
+        detail_cols = st.columns(2)
+        with detail_cols[0]:
+            st.markdown("#### Operating Context")
+            context = get_operating_context(reference_time)
+            if context.get("error"):
+                st.caption(context["error"])
+            else:
+                st.json(context)
+
+        with detail_cols[1]:
+            st.markdown("#### Feature Contributions")
+            contrib = get_feature_contributions(
+                reference_time, selected_inverter if selected_inverter != "All" else None
+            )
+            if contrib.get("error"):
+                st.caption(contrib["error"])
+            elif contrib.get("contributions"):
+                for item in contrib["contributions"][:5]:
+                    st.markdown(
+                        f"- **{item['feature']}**: {fmt_num(item['contribution_pct'], 1, '%')} "
+                        "contribution to unusual reconstruction error"
+                    )
+                st.caption(
+                    "These variables contributed most to unusual reconstruction error — "
+                    "this does not identify which one caused the anomaly."
+                )
+            else:
+                st.caption("No feature-contribution data available for this event.")
+
+        st.markdown("#### Comparison to Healthy Baseline")
+        baseline_context = get_baseline_context(reference_time)
+        if baseline_context.get("error"):
+            st.caption(baseline_context["error"])
+        else:
+            ref_rows = []
+            for metric, values in baseline_context.get("reference", {}).items():
+                ref_rows.append({
+                    "Metric": metric,
+                    "Typical healthy range": f"{fmt_num(values.get('typical_low_q10'))}–{fmt_num(values.get('typical_high_q90'))}",
+                    "Typical (median)": fmt_num(values.get("median")),
+                })
+            if ref_rows:
+                st.dataframe(pd.DataFrame(ref_rows), width="stretch", hide_index=True)
+                st.caption("This is a comparison reference only. It does not establish cause.")
+            else:
+                st.caption("No matching healthy reference group for these operating conditions.")
+
+        st.markdown("#### 24-Hour Trend Before This Event")
+        pre_trend = get_pre_anomaly_trend(reference_time, hours=24)
+        if pre_trend.get("error"):
+            st.caption(pre_trend["error"])
+        else:
+            st.caption(
+                f"{pre_trend['observations']} observations between "
+                f"{fmt_time(pre_trend['window_start'])} and {fmt_time(pre_trend['window_end'])}."
+            )
+            stat_rows = [{"Variable": k, **v} for k, v in pre_trend.get("statistics", {}).items()]
+            if stat_rows:
+                st.dataframe(pd.DataFrame(stat_rows), width="stretch", hide_index=True)
+            else:
+                st.caption("No pre-event trend statistics available.")
+
+        st.markdown("#### Data Quality for This Event")
+        event_window_rows = filtered_df[
+            (filtered_df["timestamp"] >= event_row["start_time"]) & (filtered_df["timestamp"] <= event_row["end_time"])
+        ]
+        render_optional_data_validation(event_window_rows, label="this event's readings")
+
+# ------------------------------------------------------------
+# TAB: TRENDS (raw history, including pre-evaluation period)
+# ------------------------------------------------------------
+with tab_trends:
+    st.markdown("## Historical Trends")
+    if not has_trend_data:
+        st.caption("`trend_data.parquet` not found — showing the evaluation-period data only.")
+
+    if filtered_trend_df.empty:
+        st.info("No historical readings in this date range.")
+    else:
+        trend_metric_options = [
+            c for c in [
+                "ac_power_kw", "dc_power_kw", "inverter_temperature_c",
+                "ambient_temperature_c", "efficiency_pct", "dc_current_a", "ac_current_a",
+            ]
+            if c in filtered_trend_df.columns
+        ]
+        if trend_metric_options:
+            chosen_metrics = st.multiselect(
+                "Variables to plot", trend_metric_options, default=trend_metric_options[:2]
+            )
+            if chosen_metrics:
+                tfig = go.Figure()
+                for m in chosen_metrics:
+                    tfig.add_trace(
+                        go.Scatter(x=filtered_trend_df["timestamp"], y=filtered_trend_df[m], mode="lines", name=m)
+                    )
+                if has_trend_data:
+                    tfig.add_vrect(
+                        x0=eval_min_date, x1=eval_max_date,
+                        fillcolor="#0F3554", opacity=0.04, line_width=0,
+                        annotation_text="Scored evaluation period", annotation_position="top left",
+                    )
+                tfig.update_layout(
+                    height=380, template="plotly_white", hovermode="x unified",
+                    margin=dict(t=30, l=55, r=25, b=45),
+                )
+                st.plotly_chart(tfig, width="stretch")
+                st.caption(
+                    "Dates outside the scored evaluation period show raw readings only — "
+                    "they were not evaluated by the anomaly detector."
+                )
+        else:
+            st.info("No plottable trend variables found in this dataset.")
