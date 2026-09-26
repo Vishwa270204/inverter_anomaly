@@ -551,8 +551,6 @@ COMPARISON_METRICS = [
     ("dc_power_kw", "DC Power", " kW"),
     ("ac_power_kw", "AC Power", " kW"),
     ("inverter_temperature_c", "Temperature", " °C"),
-    ("efficiency_pct", "Efficiency", "%"),
-    ("power_factor", "Power Factor", ""),
     ("dc_current_a", "DC Current", " A"),
 ]
 
@@ -1660,9 +1658,6 @@ with tab_overview:
         st.dataframe(comparison_table, width="stretch", hide_index=True)
     else:
         st.caption("No overlapping variables between the anomaly data and the healthy baseline.")
-
-    st.markdown("### Data Quality")
-    render_optional_data_validation(filtered_df, label="the selected period's data")
 
 # ------------------------------------------------------------
 # TAB: AI ANALYSIS (overall population explanation)
